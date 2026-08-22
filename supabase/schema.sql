@@ -150,6 +150,118 @@ CREATE TABLE IF NOT EXISTS public.activity_logs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 11. RECEIPTS TABLE
+CREATE TABLE IF NOT EXISTS public.receipts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  business_id UUID REFERENCES public.businesses(id) ON DELETE SET NULL,
+  client_id UUID REFERENCES public.clients(id) ON DELETE SET NULL,
+  invoice_id UUID REFERENCES public.invoices(id) ON DELETE SET NULL,
+  payment_id UUID REFERENCES public.payments(id) ON DELETE SET NULL,
+  receipt_number TEXT NOT NULL,
+  invoice_number TEXT NOT NULL,
+  amount NUMERIC(12,2) NOT NULL,
+  currency TEXT DEFAULT 'USD',
+  payment_date TIMESTAMPTZ DEFAULT NOW(),
+  payment_method TEXT DEFAULT 'Paystack',
+  notes TEXT,
+  status TEXT DEFAULT 'paid',
+  items JSONB DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 12. PRODUCTS & SERVICES TABLE
+CREATE TABLE IF NOT EXISTS public.products (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  business_id UUID REFERENCES public.businesses(id) ON DELETE SET NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  type TEXT NOT NULL DEFAULT 'service',
+  sku TEXT,
+  unit TEXT DEFAULT 'item',
+  unit_price NUMERIC(12,2) DEFAULT 0,
+  tax_rate NUMERIC(5,2) DEFAULT 0,
+  currency TEXT DEFAULT 'USD',
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 13. EXPENSES TABLE
+CREATE TABLE IF NOT EXISTS public.expenses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  business_id UUID REFERENCES public.businesses(id) ON DELETE SET NULL,
+  description TEXT NOT NULL,
+  amount NUMERIC(12,2) NOT NULL,
+  currency TEXT DEFAULT 'USD',
+  category TEXT NOT NULL DEFAULT 'Other',
+  date DATE DEFAULT CURRENT_DATE,
+  vendor TEXT,
+  payment_method TEXT DEFAULT 'Card',
+  notes TEXT,
+  receipt_url TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 14. RECURRING INVOICES TABLE
+CREATE TABLE IF NOT EXISTS public.recurring_invoices (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  business_id UUID REFERENCES public.businesses(id) ON DELETE SET NULL,
+  client_id UUID REFERENCES public.clients(id) ON DELETE SET NULL,
+  frequency TEXT NOT NULL DEFAULT 'monthly',
+  start_date DATE DEFAULT CURRENT_DATE,
+  end_date DATE,
+  next_invoice_date DATE NOT NULL,
+  last_generated_date DATE,
+  status TEXT DEFAULT 'active',
+  currency TEXT DEFAULT 'USD',
+  subtotal NUMERIC(12,2) DEFAULT 0,
+  tax_rate NUMERIC(5,2) DEFAULT 0,
+  tax_amount NUMERIC(12,2) DEFAULT 0,
+  discount NUMERIC(12,2) DEFAULT 0,
+  total NUMERIC(12,2) DEFAULT 0,
+  notes TEXT,
+  terms TEXT,
+  template TEXT DEFAULT 'modern',
+  send_email_on_creation BOOLEAN DEFAULT FALSE,
+  items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 15. REMINDER SETTINGS TABLE
+CREATE TABLE IF NOT EXISTS public.reminder_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
+  enabled BOOLEAN DEFAULT TRUE,
+  first_reminder_days INT DEFAULT 1,
+  second_reminder_days INT DEFAULT 7,
+  final_reminder_days INT DEFAULT 14,
+  max_reminders INT DEFAULT 3,
+  custom_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 16. REMINDER LOGS TABLE
+CREATE TABLE IF NOT EXISTS public.reminder_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  invoice_id UUID NOT NULL REFERENCES public.invoices(id) ON DELETE CASCADE,
+  client_id UUID REFERENCES public.clients(id) ON DELETE SET NULL,
+  reminder_stage TEXT NOT NULL,
+  days_overdue INT DEFAULT 0,
+  recipient_email TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'sent',
+  error_message TEXT,
+  sent_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ===================================================
 -- PERFORMANCE & LOOKUP INDEXES
 -- ===================================================
@@ -161,6 +273,14 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice_id ON public.invoice_items(
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON public.payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_activities_user_id ON public.activities(user_id);
 CREATE INDEX IF NOT EXISTS idx_activity_logs_user_id ON public.activity_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_user_id ON public.receipts(user_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_invoice_id ON public.receipts(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_products_user_id ON public.products(user_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_user_id ON public.expenses(user_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON public.expenses(date);
+CREATE INDEX IF NOT EXISTS idx_recurring_invoices_user_id ON public.recurring_invoices(user_id);
+CREATE INDEX IF NOT EXISTS idx_recurring_invoices_next_date ON public.recurring_invoices(next_invoice_date);
+CREATE INDEX IF NOT EXISTS idx_reminder_logs_invoice_id ON public.reminder_logs(invoice_id);
 
 -- ===================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -176,6 +296,12 @@ ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.usage ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.activity_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.receipts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.recurring_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reminder_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reminder_logs ENABLE ROW LEVEL SECURITY;
 
 -- 1. Profiles Policies
 DROP POLICY IF EXISTS "Users can view own profile" ON public.profiles;
@@ -310,6 +436,66 @@ CREATE POLICY "Users can insert own activity logs" ON public.activity_logs FOR I
 CREATE POLICY "Users can update own activity logs" ON public.activity_logs FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
 CREATE POLICY "Users can delete own activity logs" ON public.activity_logs FOR DELETE USING (auth.uid() = user_id);
 
+-- 11. Receipts Policies
+DROP POLICY IF EXISTS "Users can view own receipts" ON public.receipts;
+DROP POLICY IF EXISTS "Users can insert own receipts" ON public.receipts;
+DROP POLICY IF EXISTS "Users can update own receipts" ON public.receipts;
+DROP POLICY IF EXISTS "Users can delete own receipts" ON public.receipts;
+CREATE POLICY "Users can view own receipts" ON public.receipts FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own receipts" ON public.receipts FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own receipts" ON public.receipts FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own receipts" ON public.receipts FOR DELETE USING (auth.uid() = user_id);
+
+-- 12. Products Policies
+DROP POLICY IF EXISTS "Users can view own products" ON public.products;
+DROP POLICY IF EXISTS "Users can insert own products" ON public.products;
+DROP POLICY IF EXISTS "Users can update own products" ON public.products;
+DROP POLICY IF EXISTS "Users can delete own products" ON public.products;
+CREATE POLICY "Users can view own products" ON public.products FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own products" ON public.products FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own products" ON public.products FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own products" ON public.products FOR DELETE USING (auth.uid() = user_id);
+
+-- 13. Expenses Policies
+DROP POLICY IF EXISTS "Users can view own expenses" ON public.expenses;
+DROP POLICY IF EXISTS "Users can insert own expenses" ON public.expenses;
+DROP POLICY IF EXISTS "Users can update own expenses" ON public.expenses;
+DROP POLICY IF EXISTS "Users can delete own expenses" ON public.expenses;
+CREATE POLICY "Users can view own expenses" ON public.expenses FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own expenses" ON public.expenses FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own expenses" ON public.expenses FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own expenses" ON public.expenses FOR DELETE USING (auth.uid() = user_id);
+
+-- 14. Recurring Invoices Policies
+DROP POLICY IF EXISTS "Users can view own recurring invoices" ON public.recurring_invoices;
+DROP POLICY IF EXISTS "Users can insert own recurring invoices" ON public.recurring_invoices;
+DROP POLICY IF EXISTS "Users can update own recurring invoices" ON public.recurring_invoices;
+DROP POLICY IF EXISTS "Users can delete own recurring invoices" ON public.recurring_invoices;
+CREATE POLICY "Users can view own recurring invoices" ON public.recurring_invoices FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own recurring invoices" ON public.recurring_invoices FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own recurring invoices" ON public.recurring_invoices FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own recurring invoices" ON public.recurring_invoices FOR DELETE USING (auth.uid() = user_id);
+
+-- 15. Reminder Settings Policies
+DROP POLICY IF EXISTS "Users can view own reminder settings" ON public.reminder_settings;
+DROP POLICY IF EXISTS "Users can insert own reminder settings" ON public.reminder_settings;
+DROP POLICY IF EXISTS "Users can update own reminder settings" ON public.reminder_settings;
+DROP POLICY IF EXISTS "Users can delete own reminder settings" ON public.reminder_settings;
+CREATE POLICY "Users can view own reminder settings" ON public.reminder_settings FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own reminder settings" ON public.reminder_settings FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own reminder settings" ON public.reminder_settings FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own reminder settings" ON public.reminder_settings FOR DELETE USING (auth.uid() = user_id);
+
+-- 16. Reminder Logs Policies
+DROP POLICY IF EXISTS "Users can view own reminder logs" ON public.reminder_logs;
+DROP POLICY IF EXISTS "Users can insert own reminder logs" ON public.reminder_logs;
+DROP POLICY IF EXISTS "Users can update own reminder logs" ON public.reminder_logs;
+DROP POLICY IF EXISTS "Users can delete own reminder logs" ON public.reminder_logs;
+CREATE POLICY "Users can view own reminder logs" ON public.reminder_logs FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Users can insert own reminder logs" ON public.reminder_logs FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can update own reminder logs" ON public.reminder_logs FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "Users can delete own reminder logs" ON public.reminder_logs FOR DELETE USING (auth.uid() = user_id);
+
 -- ===================================================
 -- AUTOMATIC NEW USER INITIALIZATION TRIGGER
 -- ===================================================
@@ -338,6 +524,10 @@ BEGIN
 
   INSERT INTO public.usage (user_id, invoice_count_month, ai_generations_month)
   VALUES (new.id, 0, 0)
+  ON CONFLICT (user_id) DO NOTHING;
+
+  INSERT INTO public.reminder_settings (user_id, enabled, first_reminder_days, second_reminder_days, final_reminder_days, max_reminders)
+  VALUES (new.id, true, 1, 7, 14, 3)
   ON CONFLICT (user_id) DO NOTHING;
 
   RETURN NEW;
