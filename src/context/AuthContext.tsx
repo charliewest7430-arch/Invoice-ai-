@@ -1,0 +1,413 @@
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { User } from '@supabase/supabase-js';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+import { Profile } from '../types';
+
+interface AuthContextType {
+  user: User | null;
+  profile: Profile | null;
+  loading: boolean;
+  isDemoUser: boolean;
+  isAuthenticated: boolean;
+  isPasswordRecovery: boolean;
+  setIsPasswordRecovery: (value: boolean) => void;
+  signUp: (email: string, pass: string, fullName: string, businessName?: string) => Promise<{ success: boolean; error?: string }>;
+  signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  signOut: () => Promise<void>;
+  resetPasswordForEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
+  updatePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  enableDemoMode: () => void;
+  verifySupabaseSession: () => Promise<boolean>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+const DEMO_USER: User = {
+  id: 'usr_demo_882910',
+  app_metadata: {},
+  user_metadata: { full_name: 'Alex Morgan' },
+  aud: 'authenticated',
+  created_at: new Date().toISOString(),
+  email: 'alex.morgan@example.com',
+  phone: '',
+  role: 'authenticated',
+  updated_at: new Date().toISOString(),
+};
+
+const DEMO_PROFILE: Profile = {
+  id: 'usr_demo_882910',
+  email: 'alex.morgan@example.com',
+  full_name: 'Alex Morgan',
+  role: 'owner',
+  created_at: new Date().toISOString(),
+};
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [isDemoUser, setIsDemoUser] = useState<boolean>(false);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState<boolean>(
+    window.location.pathname === '/reset-password' ||
+    window.location.hash.includes('type=recovery') ||
+    window.location.search.includes('type=recovery')
+  );
+
+  const fetchAndEnsureProfile = async (authUser: User): Promise<Profile | null> => {
+    if (!supabase) return null;
+    try {
+      // 1. Load user's profile from profiles table using authenticated user's ID
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', authUser.id)
+        .maybeSingle();
+
+      if (data && data.full_name) {
+        setProfile(data);
+        return data;
+      }
+
+      // If profile record missing or full_name is empty, construct and save profile
+      const fullName =
+        data?.full_name ||
+        authUser.user_metadata?.full_name ||
+        authUser.email?.split('@')[0] ||
+        'User';
+
+      const newProfile: Profile = {
+        id: authUser.id,
+        email: authUser.email || '',
+        full_name: fullName,
+        role: 'owner',
+        created_at: new Date().toISOString(),
+      };
+
+      const { data: upsertedData } = await supabase
+        .from('profiles')
+        .upsert(newProfile)
+        .select()
+        .maybeSingle();
+
+      const finalProfile = upsertedData || newProfile;
+      setProfile(finalProfile);
+      return finalProfile;
+    } catch (err) {
+      console.error('Fetch profile error:', err);
+      const fallbackProfile: Profile = {
+        id: authUser.id,
+        email: authUser.email || '',
+        full_name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
+        role: 'owner',
+        created_at: new Date().toISOString(),
+      };
+      setProfile(fallbackProfile);
+      return fallbackProfile;
+    }
+  };
+
+  const syncUserAndProfile = async () => {
+    setLoading(true);
+    if (!isSupabaseConfigured || !supabase) {
+      const savedDemo = localStorage.getItem('invoiceflow_demo_active');
+      if (savedDemo === 'true') {
+        setUser(DEMO_USER);
+        setProfile(DEMO_PROFILE);
+        setIsDemoUser(true);
+      } else {
+        setUser(null);
+        setProfile(null);
+        setIsDemoUser(false);
+      }
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // Check if URL hash or query contains Supabase authentication callback tokens or codes
+      const hashStr = window.location.hash;
+      const searchStr = window.location.search;
+      const hasAuthParamsInUrl =
+        hashStr.includes('access_token=') ||
+        hashStr.includes('refresh_token=') ||
+        hashStr.includes('type=') ||
+        hashStr.includes('error=') ||
+        searchStr.includes('code=');
+
+      if (hasAuthParamsInUrl) {
+        localStorage.removeItem('invoiceflow_demo_active');
+      }
+
+      // Verify authenticated user with Supabase Auth
+      const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
+
+      if (currentUser && !userError) {
+        setUser(currentUser);
+        setIsDemoUser(false);
+        localStorage.removeItem('invoiceflow_demo_active');
+        await fetchAndEnsureProfile(currentUser);
+      } else {
+        setUser(null);
+        setProfile(null);
+        setIsDemoUser(false);
+      }
+    } catch (err) {
+      console.error('Error syncing auth and profile:', err);
+      setUser(null);
+      setProfile(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    syncUserAndProfile();
+
+    if (supabase) {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          setIsPasswordRecovery(true);
+        }
+
+        if (session?.user) {
+          // Requirement 1: Use supabase.auth.getUser() to verify identity
+          const { data: { user: verifiedUser } } = await supabase.auth.getUser();
+          const activeUser = verifiedUser || session.user;
+          setUser(activeUser);
+          setIsDemoUser(false);
+          localStorage.removeItem('invoiceflow_demo_active');
+          await fetchAndEnsureProfile(activeUser);
+
+          if (window.location.hash.includes('access_token=') || window.location.hash.includes('type=') || window.location.search.includes('code=')) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+          setProfile(null);
+          setIsDemoUser(false);
+          setIsPasswordRecovery(false);
+          localStorage.removeItem('invoiceflow_demo_active');
+        }
+        setLoading(false);
+      });
+
+      return () => {
+        subscription.unsubscribe();
+      };
+    }
+  }, []);
+
+  const signUp = async (email: string, pass: string, fullName: string, businessName?: string) => {
+    setLoading(true);
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: pass,
+        options: {
+          data: { full_name: fullName, business_name: businessName || '' },
+          emailRedirectTo: window.location.origin,
+        },
+      });
+
+      if (error) {
+        setLoading(false);
+        return { success: false, error: error.message };
+      }
+
+      if (data.user) {
+        setUser(data.user);
+        setIsDemoUser(false);
+        localStorage.removeItem('invoiceflow_demo_active');
+
+        // Create profile record in Supabase associated with auth.users.id
+        const newProfile: Profile = {
+          id: data.user.id,
+          email: data.user.email || email,
+          full_name: fullName,
+          role: 'owner',
+          created_at: new Date().toISOString(),
+        };
+
+        try {
+          await supabase.from('profiles').upsert(newProfile);
+        } catch (e) {
+          console.warn('Profiles upsert skipped or table missing:', e);
+        }
+        setProfile(newProfile);
+
+        // Save business information
+        const defaultBizName = businessName || (fullName ? `${fullName}'s Business` : 'My Business');
+        try {
+          await supabase.from('businesses').upsert({
+            user_id: data.user.id,
+            name: defaultBizName,
+            email: email,
+            default_currency: 'USD',
+            invoice_prefix: 'INV-',
+            next_invoice_number: 1001,
+            payment_terms: 'Due on receipt',
+          });
+        } catch (e) {
+          console.warn('Businesses upsert skipped or table missing:', e);
+        }
+
+        setLoading(false);
+        return { success: true };
+      }
+    }
+
+    if (!isSupabaseConfigured) {
+      // If Supabase credentials are completely unconfigured in the project, allow local preview
+      const newDemoUser: User = { ...DEMO_USER, id: `usr_${Date.now()}`, email };
+      setUser(newDemoUser);
+      setProfile({
+        id: newDemoUser.id,
+        email,
+        full_name: fullName,
+        role: 'owner',
+        created_at: new Date().toISOString(),
+      });
+      setIsDemoUser(true);
+      localStorage.setItem('invoiceflow_demo_active', 'true');
+      setLoading(false);
+      return { success: true };
+    }
+
+    setLoading(false);
+    return { success: false, error: 'Unable to connect to Supabase authentication.' };
+  };
+
+  const signIn = async (email: string, pass: string) => {
+    setLoading(true);
+    if (isSupabaseConfigured && supabase) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password: pass,
+      });
+
+      if (error) {
+        setLoading(false);
+        return { success: false, error: error.message };
+      }
+
+      if (data.user) {
+        const { data: { user: verifiedUser } } = await supabase.auth.getUser();
+        const currentUser = verifiedUser || data.user;
+
+        setUser(currentUser);
+        setIsDemoUser(false);
+        localStorage.removeItem('invoiceflow_demo_active');
+        await fetchAndEnsureProfile(currentUser);
+
+        setLoading(false);
+        return { success: true };
+      }
+    }
+
+    if (!isSupabaseConfigured) {
+      setUser({ ...DEMO_USER, email });
+      setProfile({ ...DEMO_PROFILE, email });
+      setIsDemoUser(true);
+      localStorage.setItem('invoiceflow_demo_active', 'true');
+      setLoading(false);
+      return { success: true };
+    }
+
+    setLoading(false);
+    return { success: false, error: 'Unable to connect to Supabase authentication.' };
+  };
+
+  const signOut = async () => {
+    setLoading(true);
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.error('Error signing out:', err);
+      }
+    }
+
+    // Requirement 6: Clear all user-specific React state & profile on logout
+    setUser(null);
+    setProfile(null);
+    setIsDemoUser(false);
+    setIsPasswordRecovery(false);
+    localStorage.removeItem('invoiceflow_demo_active');
+    setLoading(false);
+  };
+
+  const resetPasswordForEmail = async (emailToReset: string) => {
+    if (isSupabaseConfigured && supabase) {
+      const redirectUrl = `${window.location.origin}/reset-password`;
+      const { error } = await supabase.auth.resetPasswordForEmail(emailToReset, {
+        redirectTo: redirectUrl,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+    }
+    return { success: true };
+  };
+
+  const updatePassword = async (newPassword: string) => {
+    if (isSupabaseConfigured && supabase) {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+    }
+    return { success: true };
+  };
+
+  const verifySupabaseSession = async (): Promise<boolean> => {
+    if (!isSupabaseConfigured || !supabase) {
+      return Boolean(user && !isDemoUser);
+    }
+    try {
+      const { data: { user: verifiedUser }, error } = await supabase.auth.getUser();
+      return Boolean(verifiedUser && !error);
+    } catch {
+      return false;
+    }
+  };
+
+  const enableDemoMode = () => {
+    setUser(DEMO_USER);
+    setProfile(DEMO_PROFILE);
+    setIsDemoUser(true);
+    localStorage.setItem('invoiceflow_demo_active', 'true');
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        profile,
+        loading,
+        isDemoUser,
+        isAuthenticated: Boolean(user && !isDemoUser),
+        isPasswordRecovery,
+        setIsPasswordRecovery,
+        signUp,
+        signIn,
+        signOut,
+        resetPasswordForEmail,
+        updatePassword,
+        enableDemoMode,
+        verifySupabaseSession,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
