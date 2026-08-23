@@ -214,7 +214,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, onCloseMobile })
             </div>
             <div className="lg:hidden xl:block min-w-0 flex-1">
               <p className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate leading-tight">
-                {profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Alex Morgan'}
+                {profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || (isDemoUser ? 'Alex Morgan' : 'User')}
               </p>
               <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate">
                 {business?.name || 'My Business'}

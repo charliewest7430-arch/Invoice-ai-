@@ -2,6 +2,10 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import { Profile } from '../types';
+import { defaultEmailService } from '../services/emailService';
+
+// In-memory set to prevent double execution within the same browser session / React lifecycle
+const dispatchedWelcomeUserIds = new Set<string>();
 
 interface AuthContextType {
   user: User | null;
@@ -11,7 +15,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isPasswordRecovery: boolean;
   setIsPasswordRecovery: (value: boolean) => void;
-  signUp: (email: string, pass: string, fullName: string, businessName?: string) => Promise<{ success: boolean; error?: string }>;
+  signUp: (email: string, pass: string, fullName: string, businessName?: string) => Promise<{ success: boolean; error?: string; emailConfirmationRequired?: boolean }>;
   signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   resetPasswordForEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
@@ -199,94 +203,182 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signUp = async (email: string, pass: string, fullName: string, businessName?: string) => {
     setLoading(true);
-    if (isSupabaseConfigured && supabase) {
+
+    const cleanEmail = email.trim();
+    const cleanName = fullName.trim();
+    const cleanBiz = businessName?.trim() || '';
+
+    if (!isSupabaseConfigured || !supabase) {
+      setLoading(false);
+      return {
+        success: false,
+        error: 'Supabase authentication is not configured. Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.',
+      };
+    }
+
+    try {
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: cleanEmail,
         password: pass,
         options: {
-          data: { full_name: fullName, business_name: businessName || '' },
+          data: { full_name: cleanName, business_name: cleanBiz },
           emailRedirectTo: window.location.origin,
         },
       });
 
       if (error) {
         setLoading(false);
+        const errMsg = error.message.toLowerCase();
+        if (
+          errMsg.includes('already registered') ||
+          errMsg.includes('user already exists') ||
+          errMsg.includes('already exists') ||
+          error.status === 422
+        ) {
+          return {
+            success: false,
+            error: 'An account with this email already exists. Please sign in instead.',
+          };
+        }
         return { success: false, error: error.message };
       }
 
-      if (data.user) {
-        setUser(data.user);
-        setIsDemoUser(false);
-        localStorage.removeItem('invoiceflow_demo_active');
-
-        // Create profile record in Supabase associated with auth.users.id
-        const newProfile: Profile = {
-          id: data.user.id,
-          email: data.user.email || email,
-          full_name: fullName,
-          role: 'owner',
-          created_at: new Date().toISOString(),
+      // Supabase email-enumeration protection: If user already exists, Supabase returns data.user with empty identities array
+      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+        setLoading(false);
+        return {
+          success: false,
+          error: 'An account with this email already exists. Please sign in instead.',
         };
+      }
 
-        try {
-          await supabase.from('profiles').upsert(newProfile);
-        } catch (e) {
-          console.warn('Profiles upsert skipped or table missing:', e);
+      if (data.user) {
+        const isEmailConfirmationRequired = !data.session && !data.user.confirmed_at && !data.user.email_confirmed_at;
+
+        // If a valid session is created immediately (auto-confirm enabled)
+        if (data.session || !isEmailConfirmationRequired) {
+          setUser(data.user);
+          setIsDemoUser(false);
+          localStorage.removeItem('invoiceflow_demo_active');
+
+          // Initialize Profile
+          const newProfile: Profile = {
+            id: data.user.id,
+            email: cleanEmail,
+            full_name: cleanName || 'User',
+            role: 'owner',
+            created_at: new Date().toISOString(),
+            welcome_email_sent: true,
+            welcome_email_sent_at: new Date().toISOString(),
+          };
+
+          try {
+            await supabase.from('profiles').upsert(newProfile);
+          } catch (e) {
+            console.warn('Profiles upsert notice:', e);
+          }
+          setProfile(newProfile);
+
+          // Initialize Business
+          const defaultBizName = cleanBiz || (cleanName ? `${cleanName}'s Business` : 'My Business');
+          try {
+            await supabase.from('businesses').upsert({
+              user_id: data.user.id,
+              name: defaultBizName,
+              email: cleanEmail,
+              default_currency: 'USD',
+              invoice_prefix: 'INV-',
+              next_invoice_number: 1001,
+              payment_terms: 'Due on receipt',
+            });
+          } catch (e) {
+            console.warn('Businesses upsert notice:', e);
+          }
+
+          // Initialize default free subscription
+          try {
+            await supabase.from('subscriptions').upsert({
+              user_id: data.user.id,
+              plan: 'free',
+              status: 'active',
+            });
+          } catch (e) {
+            console.warn('Subscriptions upsert notice:', e);
+          }
+
+          // Initialize default reminder settings
+          try {
+            await supabase.from('reminder_settings').upsert({
+              user_id: data.user.id,
+              enabled: true,
+              first_reminder_days: 1,
+              second_reminder_days: 7,
+              final_reminder_days: 14,
+              max_reminders: 3,
+            });
+          } catch (e) {
+            console.warn('Reminder settings notice:', e);
+          }
         }
-        setProfile(newProfile);
 
-        // Save business information
-        const defaultBizName = businessName || (fullName ? `${fullName}'s Business` : 'My Business');
-        try {
-          await supabase.from('businesses').upsert({
-            user_id: data.user.id,
-            name: defaultBizName,
-            email: email,
-            default_currency: 'USD',
-            invoice_prefix: 'INV-',
-            next_invoice_number: 1001,
-            payment_terms: 'Due on receipt',
+        // Fire background welcome email if not already dispatched in this session
+        const dedupeKey = data.user.id || cleanEmail;
+        if (!dispatchedWelcomeUserIds.has(dedupeKey)) {
+          dispatchedWelcomeUserIds.add(dedupeKey);
+          dispatchedWelcomeUserIds.add(cleanEmail);
+
+          defaultEmailService.sendWelcomeEmail({
+            to: { email: cleanEmail, name: cleanName },
+            userId: data.user.id,
+            businessName: cleanBiz,
+          }).catch((err) => {
+            console.warn('Non-blocking welcome email delivery notice:', err);
           });
-        } catch (e) {
-          console.warn('Businesses upsert skipped or table missing:', e);
         }
 
         setLoading(false);
-        return { success: true };
+        return {
+          success: true,
+          emailConfirmationRequired: isEmailConfirmationRequired,
+        };
       }
-    }
 
-    if (!isSupabaseConfigured) {
-      // If Supabase credentials are completely unconfigured in the project, allow local preview
-      const newDemoUser: User = { ...DEMO_USER, id: `usr_${Date.now()}`, email };
-      setUser(newDemoUser);
-      setProfile({
-        id: newDemoUser.id,
-        email,
-        full_name: fullName,
-        role: 'owner',
-        created_at: new Date().toISOString(),
-      });
-      setIsDemoUser(true);
-      localStorage.setItem('invoiceflow_demo_active', 'true');
       setLoading(false);
-      return { success: true };
+      return { success: false, error: 'Failed to create user account. Please try again.' };
+    } catch (err: any) {
+      console.error('Sign up error:', err);
+      setLoading(false);
+      return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
     }
-
-    setLoading(false);
-    return { success: false, error: 'Unable to connect to Supabase authentication.' };
   };
 
   const signIn = async (email: string, pass: string) => {
     setLoading(true);
-    if (isSupabaseConfigured && supabase) {
+    const cleanEmail = email.trim();
+
+    if (!isSupabaseConfigured || !supabase) {
+      setLoading(false);
+      return {
+        success: false,
+        error: 'Supabase authentication is not configured. Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.',
+      };
+    }
+
+    try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: cleanEmail,
         password: pass,
       });
 
       if (error) {
         setLoading(false);
+        const errMsg = error.message.toLowerCase();
+        if (errMsg.includes('invalid login credentials') || errMsg.includes('invalid_credentials')) {
+          return { success: false, error: 'Invalid email or password. Please check your credentials and try again.' };
+        }
+        if (errMsg.includes('email not confirmed')) {
+          return { success: false, error: 'Please verify your email address before signing in.' };
+        }
         return { success: false, error: error.message };
       }
 
@@ -302,19 +394,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
         return { success: true };
       }
-    }
 
-    if (!isSupabaseConfigured) {
-      setUser({ ...DEMO_USER, email });
-      setProfile({ ...DEMO_PROFILE, email });
-      setIsDemoUser(true);
-      localStorage.setItem('invoiceflow_demo_active', 'true');
       setLoading(false);
-      return { success: true };
+      return { success: false, error: 'Sign in failed. Please try again.' };
+    } catch (err: any) {
+      console.error('Sign in error:', err);
+      setLoading(false);
+      return { success: false, error: err.message || 'An unexpected error occurred during sign in.' };
     }
-
-    setLoading(false);
-    return { success: false, error: 'Unable to connect to Supabase authentication.' };
   };
 
   const signOut = async () => {

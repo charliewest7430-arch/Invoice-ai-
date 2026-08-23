@@ -31,6 +31,7 @@ export const AuthUpgradeModal: React.FC<AuthUpgradeModalProps> = ({
   const [businessName, setBusinessName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -39,9 +40,48 @@ export const AuthUpgradeModal: React.FC<AuthUpgradeModalProps> = ({
   const planTitle = targetPlan === 'enterprise' ? 'Enterprise' : 'Pro';
   const planPrice = targetPlan === 'enterprise' ? '$99/mo' : '$29/mo';
 
+  const validateForm = (): string | null => {
+    const cleanEmail = email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!cleanEmail) {
+      return 'Email address is required.';
+    }
+    if (!emailRegex.test(cleanEmail)) {
+      return 'Please enter a valid email address.';
+    }
+    if (!password) {
+      return 'Password is required.';
+    }
+    if (password.length < 6) {
+      return 'Password must be at least 6 characters long.';
+    }
+
+    if (mode === 'signup') {
+      if (!fullName.trim()) {
+        return 'Please enter your full name.';
+      }
+      if (!confirmPassword) {
+        return 'Please confirm your password.';
+      }
+      if (password !== confirmPassword) {
+        return 'Passwords do not match.';
+      }
+    }
+
+    return null;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+
+    const validationError = validateForm();
+    if (validationError) {
+      setErrorMsg(validationError);
+      return;
+    }
+
     setIsSubmitting(true);
 
     // Save intended Pro upgrade action to sessionStorage and localStorage
@@ -54,18 +94,22 @@ export const AuthUpgradeModal: React.FC<AuthUpgradeModalProps> = ({
     }
 
     if (mode === 'signup') {
-      const res = await signUp(email, password, fullName, businessName);
+      const res = await signUp(email.trim(), password, fullName.trim(), businessName.trim());
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to create account. Please try again.');
         setIsSubmitting(false);
         return;
       }
 
-      showToast(`Account created! Continuing to ${planTitle} upgrade...`, 'success');
+      if (res.emailConfirmationRequired) {
+        showToast('Account created! Please check your email to verify your account.', 'info');
+      } else {
+        showToast(`Account created! Continuing to ${planTitle} upgrade...`, 'success');
+      }
       onClose();
       setActivePage('billing');
     } else {
-      const res = await signIn(email, password);
+      const res = await signIn(email.trim(), password);
       if (!res.success) {
         setErrorMsg(res.error || 'Invalid email or password. Please try again.');
         setIsSubmitting(false);
@@ -183,6 +227,21 @@ export const AuthUpgradeModal: React.FC<AuthUpgradeModalProps> = ({
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
             />
           </div>
+
+          {mode === 'signup' && (
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-700">Confirm Password *</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+                minLength={6}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 font-medium"
+              />
+            </div>
+          )}
 
           {/* Primary Action Button */}
           <button

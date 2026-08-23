@@ -45,6 +45,8 @@ export interface Profile {
   avatar_url?: string;
   role: 'owner' | 'member';
   created_at: string;
+  welcome_email_sent?: boolean;
+  welcome_email_sent_at?: string;
 }
 
 export interface Business {

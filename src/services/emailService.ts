@@ -52,12 +52,19 @@ export interface SendReminderEmailParams {
   customMessage?: string;
 }
 
+export interface SendWelcomeEmailParams {
+  to: EmailRecipient;
+  userId?: string;
+  businessName?: string;
+}
+
 export interface EmailSendResult {
   success: boolean;
   messageId?: string;
   provider?: string;
   message?: string;
   configured?: boolean;
+  duplicate?: boolean;
 }
 
 export class ServerEmailProvider {
@@ -223,6 +230,54 @@ export class ServerEmailProvider {
         message: isFetchError
           ? 'Email provider is not configured. Please set RESEND_API_KEY in environment variables to send emails.'
           : (err.message || 'Network error while attempting to send reminder email.'),
+      };
+    }
+  }
+
+  async sendWelcomeEmail(params: SendWelcomeEmailParams): Promise<EmailSendResult> {
+    const emailTo = (params.to.email || '').trim();
+    // Validate email syntax
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailTo || !emailRegex.test(emailTo)) {
+      return {
+        success: false,
+        message: 'Invalid email address provided for welcome email.',
+      };
+    }
+
+    try {
+      const response = await fetch('/api/email/welcome', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: emailTo,
+          name: params.to.name,
+          userId: params.userId,
+          businessName: params.businessName,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.success) {
+        return {
+          success: true,
+          messageId: data.data?.id || data.messageId,
+          duplicate: data.duplicate ?? false,
+          provider: 'Resend',
+          message: data.message || 'Welcome email sent successfully',
+        };
+      } else {
+        return {
+          success: false,
+          configured: data.configured ?? false,
+          message: data.message || 'Failed to send welcome email.',
+        };
+      }
+    } catch (err: any) {
+      console.warn('Welcome email request caught error:', err);
+      return {
+        success: false,
+        message: err.message || 'Network error during welcome email delivery.',
       };
     }
   }

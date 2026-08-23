@@ -27,7 +27,7 @@ import { SupportModal } from './components/common/SupportModal';
 import { ToastContainer } from './components/common/Toast';
 
 const MainAppContent: React.FC = () => {
-  const { user, isAuthenticated, isDemoUser, isPasswordRecovery } = useAuth();
+  const { user, isAuthenticated, isDemoUser, isPasswordRecovery, loading } = useAuth();
   const {
     activePage,
     setActivePage,
@@ -51,6 +51,18 @@ const MainAppContent: React.FC = () => {
 
   if (isResetPasswordRoute) {
     return <ResetPasswordPage />;
+  }
+
+  // Prevent flash or premature redirection while Supabase restores session
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#f0f4f9] dark:bg-[#0b0f19] flex items-center justify-center font-sans">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs font-bold text-slate-500 dark:text-slate-400">Loading InvoiceFlow AI...</p>
+        </div>
+      </div>
+    );
   }
 
   // If user is not signed in and not in demo mode, show Landing Page

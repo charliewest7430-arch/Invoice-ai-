@@ -63,7 +63,7 @@ export const Header: React.FC<HeaderProps> = ({
     profile?.full_name ||
     user?.user_metadata?.full_name ||
     user?.email?.split('@')[0] ||
-    'Alex Morgan';
+    (isDemoUser ? 'Alex Morgan' : 'User');
   const businessName = business?.name || 'My Business';
   const userInitial = displayName.charAt(0).toUpperCase();
 

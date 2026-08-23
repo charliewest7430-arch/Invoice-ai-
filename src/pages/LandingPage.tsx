@@ -23,30 +23,91 @@ export const LandingPage: React.FC = () => {
   const [authModalMode, setAuthModalMode] = useState<'signin' | 'signup' | 'forgot_password' | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [businessName, setBusinessName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [resetEmailSent, setResetEmailSent] = useState(false);
+  const [emailConfirmationSent, setEmailConfirmationSent] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const resetFormState = (newMode: 'signin' | 'signup' | 'forgot_password' | null) => {
+    setErrorMsg('');
+    setPassword('');
+    setConfirmPassword('');
+    setResetEmailSent(false);
+    setEmailConfirmationSent(false);
+    setAuthModalMode(newMode);
+  };
+
+  const validateForm = (): string | null => {
+    const cleanEmail = email.trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!cleanEmail) {
+      return 'Email address is required.';
+    }
+    if (!emailRegex.test(cleanEmail)) {
+      return 'Please enter a valid email address.';
+    }
+
+    if (authModalMode === 'forgot_password') {
+      return null;
+    }
+
+    if (!password) {
+      return 'Password is required.';
+    }
+    if (password.length < 6) {
+      return 'Password must be at least 6 characters long.';
+    }
+
+    if (authModalMode === 'signup') {
+      if (!fullName.trim()) {
+        return 'Please enter your full name.';
+      }
+      if (!confirmPassword) {
+        return 'Please confirm your password.';
+      }
+      if (password !== confirmPassword) {
+        return 'Passwords do not match.';
+      }
+    }
+
+    return null;
+  };
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+
+    const validationError = validateForm();
+    if (validationError) {
+      setErrorMsg(validationError);
+      return;
+    }
+
     setIsSubmitting(true);
 
     if (authModalMode === 'signup') {
-      const res = await signUp(email, password, fullName, businessName);
-      if (!res.success) setErrorMsg(res.error || 'Failed to sign up');
+      const res = await signUp(email.trim(), password, fullName.trim(), businessName.trim());
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to sign up');
+      } else if (res.emailConfirmationRequired) {
+        setEmailConfirmationSent(true);
+      }
     } else if (authModalMode === 'forgot_password') {
       try {
-        await resetPasswordForEmail(email);
+        await resetPasswordForEmail(email.trim());
         setResetEmailSent(true);
       } catch (err: any) {
         setResetEmailSent(true);
       }
     } else {
-      const res = await signIn(email, password);
-      if (!res.success) setErrorMsg(res.error || 'Failed to sign in');
+      const res = await signIn(email.trim(), password);
+      if (!res.success) {
+        setErrorMsg(res.error || 'Failed to sign in');
+      }
     }
 
     setIsSubmitting(false);
@@ -184,10 +245,7 @@ export const LandingPage: React.FC = () => {
                 </p>
               </div>
               <button
-                onClick={() => {
-                  setAuthModalMode(null);
-                  setErrorMsg('');
-                }}
+                onClick={() => resetFormState(null)}
                 className="text-slate-400 hover:text-slate-600 p-1.5 hover:bg-slate-100 rounded-xl transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -200,7 +258,21 @@ export const LandingPage: React.FC = () => {
               </p>
             )}
 
-            {authModalMode === 'forgot_password' ? (
+            {emailConfirmationSent ? (
+              <div className="space-y-4 text-center py-2">
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-xs font-semibold leading-relaxed space-y-1">
+                  <p className="font-black text-sm">Account Created!</p>
+                  <p>Please check your email (<span className="font-bold text-slate-900">{email}</span>) to verify your account, or sign in below.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => resetFormState('signin')}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
+                >
+                  Go to Sign In
+                </button>
+              </div>
+            ) : authModalMode === 'forgot_password' ? (
               resetEmailSent ? (
                 <div className="space-y-4 text-center py-2">
                   <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-xs font-semibold leading-relaxed">
@@ -208,10 +280,7 @@ export const LandingPage: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={() => {
-                      setAuthModalMode('signin');
-                      setResetEmailSent(false);
-                    }}
+                    onClick={() => resetFormState('signin')}
                     className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-all"
                   >
                     Back to Sign In
@@ -245,10 +314,7 @@ export const LandingPage: React.FC = () => {
                   <div className="text-center pt-2 border-t border-slate-100">
                     <button
                       type="button"
-                      onClick={() => {
-                        setAuthModalMode('signin');
-                        setResetEmailSent(false);
-                      }}
+                      onClick={() => resetFormState('signin')}
                       className="text-xs text-blue-600 hover:underline font-bold"
                     >
                       Back to Sign In
@@ -262,7 +328,7 @@ export const LandingPage: React.FC = () => {
                   {authModalMode === 'signup' && (
                     <>
                       <div className="space-y-1">
-                        <label className="text-xs font-bold text-slate-700">Full Name</label>
+                        <label className="text-xs font-bold text-slate-700">Full Name *</label>
                         <input
                           type="text"
                           value={fullName}
@@ -286,7 +352,7 @@ export const LandingPage: React.FC = () => {
                   )}
 
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">Email Address</label>
+                    <label className="text-xs font-bold text-slate-700">Email Address *</label>
                     <input
                       type="email"
                       value={email}
@@ -299,15 +365,11 @@ export const LandingPage: React.FC = () => {
 
                   <div className="space-y-1">
                     <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-slate-700">Password</label>
+                      <label className="text-xs font-bold text-slate-700">Password *</label>
                       {authModalMode === 'signin' && (
                         <button
                           type="button"
-                          onClick={() => {
-                            setErrorMsg('');
-                            setResetEmailSent(false);
-                            setAuthModalMode('forgot_password');
-                          }}
+                          onClick={() => resetFormState('forgot_password')}
                           className="text-[11px] text-blue-600 hover:underline font-bold"
                         >
                           Forgot password?
@@ -319,15 +381,31 @@ export const LandingPage: React.FC = () => {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
+                      minLength={6}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                       required
                     />
                   </div>
 
+                  {authModalMode === 'signup' && (
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-slate-700">Confirm Password *</label>
+                      <input
+                        type="password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="••••••••"
+                        minLength={6}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+                        required
+                      />
+                    </div>
+                  )}
+
                   <button
                     type="submit"
                     disabled={isSubmitting}
-                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm shadow-blue-500/20 transition-all mt-2 disabled:opacity-50"
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm shadow-blue-500/20 transition-all mt-2 disabled:opacity-50 cursor-pointer"
                   >
                     {isSubmitting ? 'Processing...' : authModalMode === 'signup' ? 'Sign Up' : 'Sign In'}
                   </button>
@@ -336,7 +414,7 @@ export const LandingPage: React.FC = () => {
                 <div className="text-center pt-2 border-t border-slate-100">
                   <button
                     type="button"
-                    onClick={() => setAuthModalMode(authModalMode === 'signup' ? 'signin' : 'signup')}
+                    onClick={() => resetFormState(authModalMode === 'signup' ? 'signin' : 'signup')}
                     className="text-xs text-blue-600 hover:underline font-bold"
                   >
                     {authModalMode === 'signup' ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
