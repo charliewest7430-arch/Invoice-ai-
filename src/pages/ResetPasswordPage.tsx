@@ -56,10 +56,14 @@ export const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({
 
     setIsSubmitting(true);
     try {
-      await resetPasswordForEmail(email.trim());
-      setStep('sent');
+      const res = await resetPasswordForEmail(email.trim());
+      if (res && !res.success && res.error) {
+        setErrorMsg(res.error);
+      } else {
+        setStep('sent');
+      }
     } catch (err: any) {
-      setStep('sent');
+      setErrorMsg(err?.message || 'Failed to send reset link. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

@@ -100,10 +100,16 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   paystack_customer_code TEXT,
   paystack_subscription_code TEXT,
   paystack_email_token TEXT,
+  trial_started_at TIMESTAMPTZ,
+  trial_ends_at TIMESTAMPTZ,
   current_period_end TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure trial columns exist on existing subscriptions tables
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
 
 -- 7. PAYMENTS TABLE
 CREATE TABLE IF NOT EXISTS public.payments (

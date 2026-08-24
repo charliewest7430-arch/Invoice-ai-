@@ -17,6 +17,9 @@ import {
   RecurringInvoice,
   ReminderSettings,
   ReminderLog,
+  PRO_MONTHLY,
+  ENTERPRISE_MONTHLY,
+  TRIAL_DAYS,
 } from '../types';
 import { defaultEmailService } from '../services/emailService';
 
@@ -111,6 +114,7 @@ interface AppContextType {
   subscription: Subscription;
   upgradeSubscription: (plan: PlanType, paystackRef: string) => Promise<boolean>;
   cancelSubscription: () => Promise<void>;
+  startTrial: () => Promise<boolean>;
   payments: Payment[];
   usage: Usage;
   incrementAiUsage: () => Promise<boolean>;
@@ -1054,12 +1058,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .maybeSingle();
 
         if (!subErr && subData) {
+          if (
+            subData.status === 'trialing' &&
+            subData.trial_ends_at &&
+            new Date(subData.trial_ends_at).getTime() <= Date.now()
+          ) {
+            subData.status = 'trial_expired';
+            try {
+              await supabase
+                .from('subscriptions')
+                .update({ status: 'trial_expired' })
+                .eq('user_id', user.id);
+            } catch (e) {
+              console.warn('Sync expired trial notice:', e);
+            }
+          }
           setSubscription(subData);
         } else if (!subErr && !subData) {
+          const trialStart = new Date().toISOString();
+          const trialEnd = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
           const defaultSub = {
             user_id: user.id,
             plan: 'free',
-            status: 'active',
+            status: 'trialing',
+            trial_started_at: trialStart,
+            trial_ends_at: trialEnd,
           };
           try {
             const { data: createdSub } = await supabase.from('subscriptions').insert([defaultSub]).select().maybeSingle();
@@ -1746,7 +1769,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: `pay_${Date.now()}`,
       user_id: user?.id || 'usr_demo_882910',
       paystack_reference: paystackRef,
-      amount: plan === 'pro' ? 29 : 99,
+      amount: plan === 'pro' ? PRO_MONTHLY : ENTERPRISE_MONTHLY,
       currency: 'USD',
       status: 'success',
       channel: 'card',
@@ -1784,6 +1807,39 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
 
+    return true;
+  };
+
+  const startTrial = async (): Promise<boolean> => {
+    if (subscription.trial_started_at) {
+      showToast('A 7-day free trial has already been used on this account.', 'info');
+      return false;
+    }
+    const trialStart = new Date().toISOString();
+    const trialEnd = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const updatedSub: Subscription = {
+      ...subscription,
+      status: 'trialing',
+      trial_started_at: trialStart,
+      trial_ends_at: trialEnd,
+      updated_at: new Date().toISOString(),
+    };
+    setSubscription(updatedSub);
+
+    if (isSupabaseConfigured && supabase && user && !isDemoUser) {
+      try {
+        await supabase.from('subscriptions').upsert({
+          user_id: user.id,
+          plan: subscription.plan,
+          status: 'trialing',
+          trial_started_at: trialStart,
+          trial_ends_at: trialEnd,
+        });
+      } catch (e) {
+        console.warn('Start trial notice:', e);
+      }
+    }
+    showToast('🎉 Your 7-day free trial is now active! All Pro features unlocked.', 'success');
     return true;
   };
 
@@ -2311,6 +2367,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         subscription,
         upgradeSubscription,
         cancelSubscription,
+        startTrial,
         payments,
         usage,
         incrementAiUsage,

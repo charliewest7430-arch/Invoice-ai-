@@ -459,8 +459,8 @@ app.post('/api/paystack/initialize', async (req, res) => {
     const uniqueReference = rawRef.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 100);
 
     // Ensure amount is positive number in major units (USD $) and convert to minor unit (cents: USD x 100)
-    // $29 = 2900 cents, $99 = 9900 cents
-    const rawAmountNum = Math.max(1, Number(amount) || 29);
+    // $9.99 = 999 cents, $15.99 = 1599 cents
+    const rawAmountNum = Math.max(1, Number(amount) || 9.99);
     const amountInMinor = Math.round(rawAmountNum * 100);
     const requestedCurrency = (currency || 'USD').toUpperCase();
 
@@ -647,7 +647,7 @@ app.post('/api/paystack/verify', async (req, res) => {
       data: {
         reference: reference || `REF-${Date.now()}`,
         status: 'success',
-        amount: Math.round((amount || 29) * 100),
+        amount: Math.round((amount || 9.99) * 100),
         currency: 'NGN',
         customer: { email: email || 'user@example.com' },
         paid_at: new Date().toISOString(),

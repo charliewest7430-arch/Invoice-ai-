@@ -21,22 +21,8 @@ export const getAuthRedirectUrl = (path: string = ''): string => {
     return `${envUrl.replace(/\/+$/, '')}${cleanPath}`;
   }
 
-  // 2. If running on the live production domain or hostname
-  if (typeof window !== 'undefined' && window.location) {
-    const hostname = window.location.hostname;
-    if (
-      hostname === 'www.invoiceflowai.cloud' ||
-      hostname === 'invoiceflowai.cloud'
-    ) {
-      return `${PRODUCTION_APP_URL}${cleanPath}`;
-    }
-
-    // If running on an AI Studio preview or cloud run container, but the live site is intended for production resets,
-    // we default production resets to https://www.invoiceflowai.cloud unless explicitly running on localhost
-    if (!hostname.includes('localhost') && !hostname.includes('127.0.0.1')) {
-      return `${PRODUCTION_APP_URL}${cleanPath}`;
-    }
-
+  // 2. Dynamic browser origin ensuring callback matches the active environment
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
     return `${window.location.origin}${cleanPath}`;
   }
 
@@ -293,15 +279,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const signUp = async (email: string, pass: string, fullName: string, businessName?: string) => {
-    setLoading(true);
-
     const cleanEmail = email.trim();
     const cleanName = fullName.trim();
     const cleanBiz = businessName?.trim() || '';
 
     if (!isSupabaseConfigured || !supabase) {
       console.warn('[Signup Debug] Supabase authentication is not configured');
-      setLoading(false);
       return {
         success: false,
         error: 'Supabase authentication is not configured. Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.',
@@ -326,7 +309,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.info(`[Signup Debug] 5. hasSession = ${hasSession}`);
 
       if (error) {
-        setLoading(false);
         const errMsg = error.message.toLowerCase();
         if (
           errMsg.includes('already registered') ||
@@ -344,7 +326,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Supabase email-enumeration protection: If user already exists, Supabase returns data.user with empty identities array
       if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
-        setLoading(false);
         return {
           success: false,
           error: 'An account with this email already exists. Please sign in instead.',
@@ -434,26 +415,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         }
 
-        setLoading(false);
         return { success: true };
       }
 
-      setLoading(false);
       return { success: false, error: 'Failed to create user account. Please try again.' };
     } catch (err: any) {
       console.error('[Auth] Sign up error:', err);
-      setLoading(false);
       return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
     }
   };
 
   const signIn = async (email: string, pass: string) => {
-    setLoading(true);
     const cleanEmail = email.trim();
     console.info('[Auth] Sign-in initiated', { email: cleanEmail });
 
     if (!isSupabaseConfigured || !supabase) {
-      setLoading(false);
       return {
         success: false,
         error: 'Supabase authentication is not configured. Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.',
@@ -468,25 +444,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.info('[Auth] Supabase signIn response received', {
         hasUser: Boolean(data?.user),
-        userId: data?.user?.id,
         hasSession: Boolean(data?.session),
         hasError: Boolean(error),
-        errorMessage: error?.message,
       });
 
       if (error) {
-        setLoading(false);
         const errMsg = error.message.toLowerCase();
-        if (errMsg.includes('invalid login credentials') || errMsg.includes('invalid_credentials')) {
-          return { success: false, error: 'Invalid email or password. Please check your credentials and try again.' };
+        if (
+          errMsg.includes('invalid login credentials') ||
+          errMsg.includes('invalid_credentials') ||
+          errMsg.includes('invalid email or password') ||
+          errMsg.includes('invalid credentials')
+        ) {
+          return { success: false, error: 'Incorrect email or password. Please try again.' };
         }
         if (errMsg.includes('email not confirmed')) {
           return { success: false, error: 'Please verify your email address before signing in.' };
         }
-        return { success: false, error: error.message };
+        return { success: false, error: error.message || 'Incorrect email or password. Please try again.' };
       }
 
-      if (data.user) {
+      // Only transition to authenticated state when both session and user exist
+      if (data?.session && data?.user) {
         const { data: { user: verifiedUser } } = await supabase.auth.getUser();
         const currentUser = verifiedUser || data.user;
 
@@ -496,16 +475,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('invoiceflow_demo_active');
         await fetchAndEnsureProfile(currentUser);
 
-        setLoading(false);
         return { success: true };
       }
 
-      setLoading(false);
-      return { success: false, error: 'Sign in failed. Please try again.' };
+      return { success: false, error: 'Incorrect email or password. Please try again.' };
     } catch (err: any) {
       console.error('[Auth] Sign in error:', err);
-      setLoading(false);
-      return { success: false, error: err.message || 'An unexpected error occurred during sign in.' };
+      return { success: false, error: err?.message || 'Incorrect email or password. Please try again.' };
     }
   };
 
@@ -519,7 +495,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Requirement 6: Clear all user-specific React state & profile on logout
+    // Clear all user-specific React state & profile on logout
     setUser(null);
     setProfile(null);
     setIsDemoUser(false);
@@ -544,7 +520,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updatePassword = async (newPassword: string) => {
     if (!isSupabaseConfigured || !supabase) {
-      console.warn('[Auth Debug] updatePassword: Supabase is not configured');
+      console.warn('[Auth Diagnostic] updatePassword: Supabase is not configured');
       return {
         success: false,
         error: 'Supabase authentication is not configured. Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.',
@@ -552,31 +528,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
-      console.info('[Auth Debug] Calling supabase.auth.updateUser with new password...');
-      const { data: sessionData } = await supabase.auth.getSession();
-      console.info('[Auth Debug] updatePassword session verification:', {
-        hasSession: Boolean(sessionData?.session),
-        hasUser: Boolean(sessionData?.session?.user),
-        userId: sessionData?.session?.user?.id,
-      });
-
-      if (!sessionData?.session) {
-        console.warn('[Auth Debug] updatePassword failed: No active Supabase recovery session found.');
-        return {
-          success: false,
-          error: 'Your password reset session is missing or expired. Please click the reset link in your email again or request a new one.',
-        };
-      }
+      console.info('[Auth Diagnostic] Executing supabase.auth.updateUser with new password...');
 
       const { data, error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
-      console.info('[Auth Debug] supabase.auth.updateUser response:', {
-        hasUser: Boolean(data?.user),
-        userId: data?.user?.id,
-        hasError: Boolean(error),
-        errorMessage: error?.message,
+      // Temporary diagnostic logging reporting ONLY safe metrics
+      console.info('[Auth Diagnostic] updateUser execution summary:', {
+        updateUserSucceeded: !error && Boolean(data?.user),
+        errorOccurred: Boolean(error),
+        errorMessage: error?.message || null,
+        sessionExistsAfterward: Boolean(data?.user),
       });
 
       if (error) {
@@ -589,7 +552,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return { success: true };
     } catch (err: any) {
-      console.error('[Auth Debug] updatePassword exception:', err);
+      console.error('[Auth Diagnostic] updatePassword exception:', err?.message || err);
       return { success: false, error: err?.message || 'An unexpected error occurred while updating your password.' };
     }
   };

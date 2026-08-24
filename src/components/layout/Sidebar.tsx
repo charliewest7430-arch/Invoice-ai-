@@ -63,7 +63,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, onCloseMobile })
     onCloseMobile();
   };
 
-  const isPro = subscription.plan === 'pro' || subscription.plan === 'enterprise';
+  const isTrialActive =
+    subscription.status === 'trialing' &&
+    Boolean(subscription.trial_ends_at && new Date(subscription.trial_ends_at).getTime() > Date.now());
+
+  const trialDaysRemaining =
+    subscription.trial_ends_at && new Date(subscription.trial_ends_at).getTime() > Date.now()
+      ? Math.max(1, Math.ceil((new Date(subscription.trial_ends_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+      : 0;
+
+  const isPro = subscription.plan === 'pro' || subscription.plan === 'enterprise' || isTrialActive;
   const userInitial = (profile?.full_name || user?.user_metadata?.full_name || user?.email || 'U').charAt(0).toUpperCase();
   const userDisplayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || (isDemoUser ? 'Alex Morgan' : 'User');
   const businessDisplayName = business?.name || 'My Business';
@@ -160,12 +169,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, onCloseMobile })
               <span className="font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Plan Usage</span>
               <span
                 className={`font-bold px-1.5 py-0.5 rounded text-[10px] uppercase ${
-                  isPro
+                  isTrialActive
+                    ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300'
+                    : isPro
                     ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
                     : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
                 }`}
               >
-                {subscription.plan}
+                {isTrialActive ? `${trialDaysRemaining}d trial` : subscription.plan}
               </span>
             </div>
             <div className="w-full bg-slate-100 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
@@ -324,12 +335,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ isMobileOpen, onCloseMobile })
                 <span className="font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Usage</span>
                 <span
                   className={`font-bold px-1.5 py-0.5 rounded text-[10px] uppercase ${
-                    isPro
+                    isTrialActive
+                      ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300'
+                      : isPro
                       ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
                       : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
                   }`}
                 >
-                  {subscription.plan}
+                  {isTrialActive ? `${trialDaysRemaining}d trial` : subscription.plan}
                 </span>
               </div>
               <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">

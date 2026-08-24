@@ -259,15 +259,22 @@ export interface ReminderLog {
   sent_at: string;
 }
 
+export const PRO_MONTHLY = 9.99;
+export const ENTERPRISE_MONTHLY = 15.99;
+export const TRIAL_DAYS = 7;
+
 export interface Subscription {
   id: string;
   user_id: string;
   plan: PlanType;
-  status: 'active' | 'past_due' | 'canceled';
+  status: 'active' | 'past_due' | 'canceled' | 'trialing' | 'trial_expired';
   paystack_customer_code?: string;
   paystack_subscription_code?: string;
   paystack_email_token?: string;
   current_period_end?: string;
+  trial_started_at?: string;
+  trial_ends_at?: string;
+  next_billing_date?: string;
   created_at: string;
   updated_at?: string;
 }

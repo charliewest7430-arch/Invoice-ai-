@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useApp } from '../../context/AppContext';
+import { PRO_MONTHLY, ENTERPRISE_MONTHLY, TRIAL_DAYS } from '../../types';
 import {
   Sparkles,
   Zap,
@@ -38,7 +39,7 @@ export const AuthUpgradeModal: React.FC<AuthUpgradeModalProps> = ({
   if (!isOpen) return null;
 
   const planTitle = targetPlan === 'enterprise' ? 'Enterprise' : 'Pro';
-  const planPrice = targetPlan === 'enterprise' ? '$99/mo' : '$29/mo';
+  const planPrice = targetPlan === 'enterprise' ? `$${ENTERPRISE_MONTHLY}/mo` : `$${PRO_MONTHLY}/mo`;
 
   const validateForm = (): string | null => {
     const cleanEmail = email.trim();

@@ -118,7 +118,7 @@ export const LandingPage: React.FC = () => {
       const res = await signIn(email.trim(), password);
       console.info('[Auth Debug] Sign-in response received:', res);
       if (!res.success) {
-        setErrorMsg(res.error || 'Failed to sign in');
+        setErrorMsg(res.error || 'Incorrect email or password. Please try again.');
       } else {
         console.info('[Auth Debug] Sign-in successful. Closing auth modal and opening Dashboard.');
         resetFormState(null);
@@ -170,7 +170,7 @@ export const LandingPage: React.FC = () => {
           </h1>
 
           <p className="text-slate-600 text-base sm:text-lg max-w-2xl mx-auto font-medium leading-relaxed">
-            Generate custom branded invoices in seconds, collect payments securely via Paystack, track client records, and get instant business intelligence powered by Gemini AI.
+            Generate custom branded invoices in seconds, collect payments securely via Paystack, track client records, and get instant business intelligence powered by InvoiceFlow AI.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
