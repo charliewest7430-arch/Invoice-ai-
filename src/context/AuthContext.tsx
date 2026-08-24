@@ -543,15 +543,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updatePassword = async (newPassword: string) => {
-    if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.auth.updateUser({
+    if (!isSupabaseConfigured || !supabase) {
+      console.warn('[Auth Debug] updatePassword: Supabase is not configured');
+      return {
+        success: false,
+        error: 'Supabase authentication is not configured. Please ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set.',
+      };
+    }
+
+    try {
+      console.info('[Auth Debug] Calling supabase.auth.updateUser with new password...');
+      const { data: sessionData } = await supabase.auth.getSession();
+      console.info('[Auth Debug] updatePassword session verification:', {
+        hasSession: Boolean(sessionData?.session),
+        hasUser: Boolean(sessionData?.session?.user),
+        userId: sessionData?.session?.user?.id,
+      });
+
+      if (!sessionData?.session) {
+        console.warn('[Auth Debug] updatePassword failed: No active Supabase recovery session found.');
+        return {
+          success: false,
+          error: 'Your password reset session is missing or expired. Please click the reset link in your email again or request a new one.',
+        };
+      }
+
+      const { data, error } = await supabase.auth.updateUser({
         password: newPassword,
       });
+
+      console.info('[Auth Debug] supabase.auth.updateUser response:', {
+        hasUser: Boolean(data?.user),
+        userId: data?.user?.id,
+        hasError: Boolean(error),
+        errorMessage: error?.message,
+      });
+
       if (error) {
         return { success: false, error: error.message };
       }
+
+      if (!data?.user) {
+        return { success: false, error: 'Password update did not return an updated user. Please try again.' };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error('[Auth Debug] updatePassword exception:', err);
+      return { success: false, error: err?.message || 'An unexpected error occurred while updating your password.' };
     }
-    return { success: true };
   };
 
   const verifySupabaseSession = async (): Promise<boolean> => {

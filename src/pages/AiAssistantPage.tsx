@@ -267,7 +267,7 @@ export const AiAssistantPage: React.FC = () => {
           <h1 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-2">
             <span>AI Assistant</span>
             <span className="text-[10px] font-extrabold uppercase bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200">
-              Gemini 3.7 Flash
+              Gemini AI
             </span>
           </h1>
           <p className="text-xs text-slate-500">Context-aware advice for invoicing, taxes, client emails, and billing terms</p>

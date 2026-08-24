@@ -212,20 +212,45 @@ const parseGeminiError = (error: any): ClassifiedAiError => {
   };
 };
 
-// Retry helper for temporary network or 503 errors
-const withRetry = async <T>(fn: () => Promise<T>, maxRetries = 2, delayMs = 1200): Promise<T> => {
+// Multi-model resilient generator with automatic fallback on 503 high demand or quota limits
+const FALLBACK_MODELS = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.7-flash'];
+
+const generateContentWithFallback = async (
+  ai: GoogleGenAI,
+  requestParams: Omit<Parameters<typeof ai.models.generateContent>[0], 'model'> & { model?: string }
+) => {
+  const primary = requestParams.model || 'gemini-3.5-flash';
+  const modelsToTry = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
   let lastError: any;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+
+  for (const model of modelsToTry) {
     try {
-      return await fn();
+      const response = await ai.models.generateContent({
+        ...requestParams,
+        model,
+      });
+      return response;
     } catch (err: any) {
       lastError = err;
-      const errStr = `${err?.message || ''} ${JSON.stringify(err)}`;
-      const isTransient = errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('high demand') || errStr.includes('fetch failed') || errStr.includes('ECONNRESET');
-      if (attempt < maxRetries && isTransient) {
-        await new Promise((res) => setTimeout(res, delayMs * (attempt + 1)));
+      const errStr = `${err?.message || ''} ${JSON.stringify(err)}`.toLowerCase();
+      const isTransientOrQuota =
+        errStr.includes('503') ||
+        errStr.includes('unavailable') ||
+        errStr.includes('high demand') ||
+        errStr.includes('overloaded') ||
+        errStr.includes('resource_exhausted') ||
+        errStr.includes('429') ||
+        errStr.includes('quota') ||
+        errStr.includes('404') ||
+        errStr.includes('not found') ||
+        errStr.includes('fetch failed') ||
+        errStr.includes('econnreset');
+
+      if (isTransientOrQuota) {
+        console.warn(`[Gemini Resiliency] Model ${model} encountered transient condition (${err?.message || '503/429/404'}). Falling back to next available model...`);
         continue;
       }
+      // If non-transient security or policy error, throw immediately
       throw err;
     }
   }
@@ -279,10 +304,9 @@ app.post('/api/ai/generate-invoice', async (req, res) => {
 
     const clientListStr = clients.map((c: any) => `- ${c.name} (${c.email || 'no email'}, ${c.company || 'N/A'})`).join('\n');
 
-    const response = await withRetry(() =>
-      ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: `Parse the following user prompt and extract or generate a complete, structured professional invoice object.
+    const response = await generateContentWithFallback(ai, {
+      model: 'gemini-3.5-flash',
+      contents: `Parse the following user prompt and extract or generate a complete, structured professional invoice object.
 User Prompt: "${prompt}"
 Default Currency: ${defaultCurrency}
 Existing Clients:
@@ -294,40 +318,39 @@ Rules:
 3. Calculate line item amounts properly (quantity * unitPrice).
 4. Issue date should be today (${new Date().toISOString().split('T')[0]}), due date 14 days later unless specified.
 `,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              clientName: { type: Type.STRING },
-              clientEmail: { type: Type.STRING },
-              clientCompany: { type: Type.STRING },
-              currency: { type: Type.STRING },
-              issueDate: { type: Type.STRING },
-              dueDate: { type: Type.STRING },
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            clientName: { type: Type.STRING },
+            clientEmail: { type: Type.STRING },
+            clientCompany: { type: Type.STRING },
+            currency: { type: Type.STRING },
+            issueDate: { type: Type.STRING },
+            dueDate: { type: Type.STRING },
+            items: {
+              type: Type.ARRAY,
               items: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    description: { type: Type.STRING },
-                    quantity: { type: Type.NUMBER },
-                    unitPrice: { type: Type.NUMBER },
-                    amount: { type: Type.NUMBER },
-                  },
-                  required: ['description', 'quantity', 'unitPrice', 'amount'],
+                type: Type.OBJECT,
+                properties: {
+                  description: { type: Type.STRING },
+                  quantity: { type: Type.NUMBER },
+                  unitPrice: { type: Type.NUMBER },
+                  amount: { type: Type.NUMBER },
                 },
+                required: ['description', 'quantity', 'unitPrice', 'amount'],
               },
-              taxRate: { type: Type.NUMBER },
-              discount: { type: Type.NUMBER },
-              notes: { type: Type.STRING },
-              terms: { type: Type.STRING },
             },
-            required: ['clientName', 'currency', 'issueDate', 'dueDate', 'items', 'taxRate', 'discount'],
+            taxRate: { type: Type.NUMBER },
+            discount: { type: Type.NUMBER },
+            notes: { type: Type.STRING },
+            terms: { type: Type.STRING },
           },
+          required: ['clientName', 'currency', 'issueDate', 'dueDate', 'items', 'taxRate', 'discount'],
         },
-      })
-    );
+      },
+    });
 
     const invoiceData = JSON.parse(response.text || '{}');
     return res.json({ success: true, invoice: invoiceData });
@@ -381,15 +404,13 @@ Help the user draft invoices, analyze revenue trends, write polite payment remin
       parts: [{ text: m.text }],
     }));
 
-    const response = await withRetry(() =>
-      ai.models.generateContent({
-        model: 'gemini-3.7-flash',
-        contents: formattedMessages,
-        config: {
-          systemInstruction,
-        },
-      })
-    );
+    const response = await generateContentWithFallback(ai, {
+      model: 'gemini-3.5-flash',
+      contents: formattedMessages,
+      config: {
+        systemInstruction,
+      },
+    });
 
     return res.json({ success: true, reply: response.text || '' });
   } catch (error: any) {
@@ -679,7 +700,7 @@ app.post('/api/email/send-invoice', async (req, res) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: process.env.EMAIL_FROM || `${businessName || 'InvoiceFlow AI'} <invoices@resend.dev>`,
+          from: process.env.EMAIL_FROM || 'InvoiceFlow <no-reply@invoiceflowai.cloud>',
           to: [cleanEmail],
           subject: `Invoice ${invoiceNumber} from ${businessName || 'InvoiceFlow AI'}`,
           html: `
@@ -774,7 +795,7 @@ app.post('/api/email/send-receipt', async (req, res) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: process.env.EMAIL_FROM || `${businessName || 'InvoiceFlow AI'} <receipts@resend.dev>`,
+          from: process.env.EMAIL_FROM || 'InvoiceFlow <no-reply@invoiceflowai.cloud>',
           to: [cleanEmail],
           subject: `Payment Receipt ${receiptNumber} for Invoice ${invoiceNumber}`,
           html: `
@@ -897,7 +918,7 @@ app.post('/api/email/welcome', async (req, res) => {
 
     // Determine production / application URL
     const appOrigin = process.env.APP_URL || (req.headers.origin ? String(req.headers.origin) : 'https://invoiceflow.app');
-    const senderFrom = process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL || 'InvoiceFlow <onboarding@resend.dev>';
+    const senderFrom = process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL || 'InvoiceFlow <no-reply@invoiceflowai.cloud>';
 
     console.log(`📧 Express Backend: Dispatching Welcome Email to ${cleanEmail} via Resend...`);
 
@@ -1089,7 +1110,7 @@ app.post('/api/reminders/send-manual', async (req, res) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: process.env.EMAIL_FROM || `${businessName || 'InvoiceFlow AI'} <billing@resend.dev>`,
+          from: process.env.EMAIL_FROM || 'InvoiceFlow <no-reply@invoiceflowai.cloud>',
           to: [cleanEmail],
           subject: `Payment Reminder: Invoice ${invoiceNumber} is ${daysOverdue > 0 ? `${daysOverdue} days overdue` : 'due soon'}`,
           html: `
@@ -1224,7 +1245,7 @@ app.post('/api/reminders/process', async (req, res) => {
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              from: process.env.EMAIL_FROM || `${inv.business?.name || 'InvoiceFlow AI'} <billing@resend.dev>`,
+              from: process.env.EMAIL_FROM || 'InvoiceFlow <no-reply@invoiceflowai.cloud>',
               to: [inv.client.email],
               subject: `Reminder: Invoice ${inv.number} is ${daysOverdue} days overdue`,
               html: `<p>Dear ${inv.client.name}, invoice ${inv.number} for ${inv.currency} ${inv.total} was due on ${inv.due_date}. Please settle at your earliest convenience.</p>`,

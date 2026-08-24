@@ -30,7 +30,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const appOrigin = process.env.APP_URL || 'https://invoiceflow.app';
-    const senderFrom = process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL || 'InvoiceFlow <onboarding@resend.dev>';
+    const senderFrom = process.env.EMAIL_FROM || process.env.RESEND_FROM_EMAIL || 'InvoiceFlow <no-reply@invoiceflowai.cloud>';
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name?.trim() || cleanEmail.split('@')[0] || 'there';
 
