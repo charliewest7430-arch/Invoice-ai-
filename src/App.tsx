@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider, useApp } from './context/AppContext';
@@ -179,6 +180,7 @@ export function App() {
       <AuthProvider>
         <AppProvider>
           <MainAppContent />
+          <Analytics />
         </AppProvider>
       </AuthProvider>
     </ThemeProvider>
