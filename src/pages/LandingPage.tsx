@@ -104,10 +104,14 @@ export const LandingPage: React.FC = () => {
       }
     } else if (authModalMode === 'forgot_password') {
       try {
-        await resetPasswordForEmail(email.trim());
-        setResetEmailSent(true);
+        const res = await resetPasswordForEmail(email.trim());
+        if (res && !res.success && res.error) {
+          setErrorMsg(res.error);
+        } else {
+          setResetEmailSent(true);
+        }
       } catch (err: any) {
-        setResetEmailSent(true);
+        setErrorMsg(err?.message || 'Failed to send reset link. Please try again.');
       }
     } else {
       console.info('[Auth Debug] Sign-in button clicked', { email: email.trim() });

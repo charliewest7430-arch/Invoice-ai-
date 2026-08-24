@@ -46,6 +46,8 @@ const MainAppContent: React.FC = () => {
   const isResetPasswordRoute =
     isPasswordRecovery ||
     window.location.pathname === '/reset-password' ||
+    window.location.pathname === '/reset-password/' ||
+    window.location.pathname.startsWith('/reset-password') ||
     window.location.hash.includes('type=recovery') ||
     window.location.search.includes('type=recovery');
 

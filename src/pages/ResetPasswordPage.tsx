@@ -18,7 +18,9 @@ export const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({
     if (
       isPasswordRecovery ||
       window.location.hash.includes('type=recovery') ||
-      window.location.search.includes('type=recovery')
+      window.location.search.includes('type=recovery') ||
+      window.location.hash.includes('access_token=') ||
+      window.location.search.includes('code=')
     ) {
       return 'update';
     }
@@ -33,13 +35,16 @@ export const ResetPasswordPage: React.FC<ResetPasswordPageProps> = ({
 
   useEffect(() => {
     if (
+      isPasswordRecovery ||
       window.location.hash.includes('type=recovery') ||
-      window.location.search.includes('type=recovery')
+      window.location.search.includes('type=recovery') ||
+      window.location.hash.includes('access_token=') ||
+      window.location.search.includes('code=')
     ) {
-      setStep('update');
+      setStep((prev) => (prev === 'success' ? 'success' : 'update'));
       setIsPasswordRecovery(true);
     }
-  }, [setIsPasswordRecovery]);
+  }, [isPasswordRecovery, setIsPasswordRecovery]);
 
   const handleSendResetEmail = async (e: React.FormEvent) => {
     e.preventDefault();

@@ -4,6 +4,45 @@ import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import { Profile } from '../types';
 import { defaultEmailService } from '../services/emailService';
 
+// Primary production origin for live deployments
+const PRODUCTION_APP_URL = 'https://www.invoiceflowai.cloud';
+
+/**
+ * Returns the target redirect URL for auth callbacks (password reset, email verification, etc.).
+ * If running on or deployed to production (or if APP_URL / VITE_APP_URL is specified), prefers
+ * https://www.invoiceflowai.cloud, while gracefully supporting localhost or dev preview environments.
+ */
+export const getAuthRedirectUrl = (path: string = ''): string => {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+  // 1. Check explicit environment override if configured
+  const envUrl = import.meta.env.VITE_APP_URL || import.meta.env.APP_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.startsWith('http')) {
+    return `${envUrl.replace(/\/+$/, '')}${cleanPath}`;
+  }
+
+  // 2. If running on the live production domain or hostname
+  if (typeof window !== 'undefined' && window.location) {
+    const hostname = window.location.hostname;
+    if (
+      hostname === 'www.invoiceflowai.cloud' ||
+      hostname === 'invoiceflowai.cloud'
+    ) {
+      return `${PRODUCTION_APP_URL}${cleanPath}`;
+    }
+
+    // If running on an AI Studio preview or cloud run container, but the live site is intended for production resets,
+    // we default production resets to https://www.invoiceflowai.cloud unless explicitly running on localhost
+    if (!hostname.includes('localhost') && !hostname.includes('127.0.0.1')) {
+      return `${PRODUCTION_APP_URL}${cleanPath}`;
+    }
+
+    return `${window.location.origin}${cleanPath}`;
+  }
+
+  return `${PRODUCTION_APP_URL}${cleanPath}`;
+};
+
 // In-memory set to prevent double execution within the same browser session / React lifecycle
 const dispatchedWelcomeUserIds = new Set<string>();
 
@@ -275,7 +314,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         password: pass,
         options: {
           data: { full_name: cleanName, business_name: cleanBiz },
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: getAuthRedirectUrl('/'),
         },
       });
 
@@ -491,7 +530,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const resetPasswordForEmail = async (emailToReset: string) => {
     if (isSupabaseConfigured && supabase) {
-      const redirectUrl = `${window.location.origin}/reset-password`;
+      const redirectUrl = getAuthRedirectUrl('/reset-password');
+      console.info('[Auth Debug] Dispatching resetPasswordForEmail with redirectTo:', redirectUrl);
       const { error } = await supabase.auth.resetPasswordForEmail(emailToReset, {
         redirectTo: redirectUrl,
       });
