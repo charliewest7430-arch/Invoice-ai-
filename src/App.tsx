@@ -50,11 +50,13 @@ const MainAppContent: React.FC = () => {
     window.location.search.includes('type=recovery');
 
   if (isResetPasswordRoute) {
+    console.info('[Route Debug] rendering ResetPasswordPage (password recovery active)');
     return <ResetPasswordPage />;
   }
 
   // Prevent flash or premature redirection while Supabase restores session
   if (loading) {
+    console.info('[Route Debug] rendering Loading spinner (auth state loading...)');
     return (
       <div className="min-h-screen bg-[#f0f4f9] dark:bg-[#0b0f19] flex items-center justify-center font-sans">
         <div className="flex flex-col items-center gap-3">
@@ -67,13 +69,17 @@ const MainAppContent: React.FC = () => {
 
   // If user is not signed in and not in demo mode, show Landing Page
   if (!isAuthenticated && !isDemoUser) {
+    console.info('[Route Debug] redirecting to LandingPage because user is unauthenticated and demo mode is inactive');
     return <LandingPage />;
   }
 
   // If user signed in for the first time and hasn't set up business, show Onboarding
   if (activePage === 'onboarding') {
+    console.info('[Route Debug] redirecting to Onboarding because activePage is onboarding');
     return <OnboardingPage />;
   }
+
+  console.info(`[Route Debug] redirecting to Dashboard/App because user is authenticated (${user?.email || 'demo user'}), activePage: ${activePage}`);
 
   return (
     <div className="min-h-screen bg-[#f0f4f9] dark:bg-[#0b0f19] text-slate-800 dark:text-slate-100 flex flex-col lg:flex-row font-sans selection:bg-blue-600 selection:text-white transition-colors">

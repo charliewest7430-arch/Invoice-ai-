@@ -28,7 +28,6 @@ export const LandingPage: React.FC = () => {
   const [businessName, setBusinessName] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [resetEmailSent, setResetEmailSent] = useState(false);
-  const [emailConfirmationSent, setEmailConfirmationSent] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const resetFormState = (newMode: 'signin' | 'signup' | 'forgot_password' | null) => {
@@ -36,7 +35,6 @@ export const LandingPage: React.FC = () => {
     setPassword('');
     setConfirmPassword('');
     setResetEmailSent(false);
-    setEmailConfirmationSent(false);
     setAuthModalMode(newMode);
   };
 
@@ -90,13 +88,18 @@ export const LandingPage: React.FC = () => {
     setIsSubmitting(true);
 
     if (authModalMode === 'signup') {
+      console.info('[Signup Debug] 1. Signup button clicked', { email: email.trim() });
+      console.info('[Signup Debug] 2. signUp() called');
       const res = await signUp(email.trim(), password, fullName.trim(), businessName.trim());
+      console.info(`[Signup Debug] 7. signup result = ${JSON.stringify(res)}`);
+      
       if (!res.success) {
+        console.info(`[Signup Debug] 10. navigation decision = Stay on modal and display error: ${res.error}`);
         setErrorMsg(res.error || 'Failed to sign up');
-      } else if (res.emailConfirmationRequired) {
-        setEmailConfirmationSent(true);
       } else {
-        // Direct authentication established - dismiss modal and transition to dashboard
+        console.info('[Signup Debug] 8. current auth state = Authenticated (session active)');
+        console.info('[Signup Debug] 9. current application route/state = Dashboard');
+        console.info('[Signup Debug] 10. navigation decision = Close auth modal and render Dashboard');
         resetFormState(null);
       }
     } else if (authModalMode === 'forgot_password') {
@@ -107,11 +110,13 @@ export const LandingPage: React.FC = () => {
         setResetEmailSent(true);
       }
     } else {
+      console.info('[Auth Debug] Sign-in button clicked', { email: email.trim() });
       const res = await signIn(email.trim(), password);
+      console.info('[Auth Debug] Sign-in response received:', res);
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to sign in');
       } else {
-        // Direct authentication established
+        console.info('[Auth Debug] Sign-in successful. Closing auth modal and opening Dashboard.');
         resetFormState(null);
       }
     }
@@ -264,21 +269,7 @@ export const LandingPage: React.FC = () => {
               </p>
             )}
 
-            {emailConfirmationSent ? (
-              <div className="space-y-4 text-center py-2">
-                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-xs font-semibold leading-relaxed space-y-1">
-                  <p className="font-black text-sm">Account Created!</p>
-                  <p>Please check your email (<span className="font-bold text-slate-900">{email}</span>) to verify your account, or sign in below.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => resetFormState('signin')}
-                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
-                >
-                  Go to Sign In
-                </button>
-              </div>
-            ) : authModalMode === 'forgot_password' ? (
+            {authModalMode === 'forgot_password' ? (
               resetEmailSent ? (
                 <div className="space-y-4 text-center py-2">
                   <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 text-xs font-semibold leading-relaxed">

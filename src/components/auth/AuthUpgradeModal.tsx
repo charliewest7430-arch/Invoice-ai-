@@ -101,11 +101,7 @@ export const AuthUpgradeModal: React.FC<AuthUpgradeModalProps> = ({
         return;
       }
 
-      if (res.emailConfirmationRequired) {
-        showToast('Account created! Please check your email to verify your account.', 'info');
-      } else {
-        showToast(`Account created! Continuing to ${planTitle} upgrade...`, 'success');
-      }
+      showToast(`Account created! Continuing to ${planTitle} upgrade...`, 'success');
       onClose();
       setActivePage('billing');
     } else {

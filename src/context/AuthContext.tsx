@@ -15,7 +15,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isPasswordRecovery: boolean;
   setIsPasswordRecovery: (value: boolean) => void;
-  signUp: (email: string, pass: string, fullName: string, businessName?: string) => Promise<{ success: boolean; error?: string; emailConfirmationRequired?: boolean }>;
+  signUp: (email: string, pass: string, fullName: string, businessName?: string) => Promise<{ success: boolean; error?: string }>;
   signIn: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   signOut: () => Promise<void>;
   resetPasswordForEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
@@ -128,6 +128,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
+      console.info('[Auth] syncUserAndProfile: Checking active session and user...');
       // Check if URL hash or query contains Supabase authentication callback tokens or codes
       const hashStr = window.location.hash;
       const searchStr = window.location.search;
@@ -139,6 +140,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         searchStr.includes('code=');
 
       if (hasAuthParamsInUrl) {
+        console.info('[Auth] Auth callback tokens/parameters detected in URL');
         localStorage.removeItem('invoiceflow_demo_active');
 
         // Exchange PKCE authorization code if present in search query
@@ -147,9 +149,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const code = searchParams.get('code');
           if (code) {
             try {
+              console.info('[Auth] Exchanging PKCE code for session...');
               await supabase.auth.exchangeCodeForSession(code);
             } catch (exErr) {
-              console.warn('PKCE exchange notice:', exErr);
+              console.warn('[Auth] PKCE exchange notice:', exErr);
             }
           }
         } else {
@@ -157,7 +160,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           try {
             await supabase.auth.getSession();
           } catch (sessErr) {
-            console.warn('Session retrieval notice:', sessErr);
+            console.warn('[Auth] Session retrieval notice:', sessErr);
           }
         }
       }
@@ -166,6 +169,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
 
       if (currentUser && !userError) {
+        console.info('[Auth] Verified active Supabase user session:', {
+          userId: currentUser.id,
+          emailConfirmed: Boolean(currentUser.confirmed_at || currentUser.email_confirmed_at),
+        });
         setUser(currentUser);
         setIsDemoUser(false);
         localStorage.removeItem('invoiceflow_demo_active');
@@ -178,17 +185,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } else {
         const savedDemo = localStorage.getItem('invoiceflow_demo_active');
         if (savedDemo === 'true' && !hasAuthParamsInUrl) {
+          console.info('[Auth] Restoring saved demo mode');
           setUser(DEMO_USER);
           setProfile(DEMO_PROFILE);
           setIsDemoUser(true);
         } else {
+          console.info('[Auth] No active session found. Routing to unauthenticated state.');
           setUser(null);
           setProfile(null);
           setIsDemoUser(false);
         }
       }
     } catch (err) {
-      console.error('Error syncing auth and profile:', err);
+      console.error('[Auth] Error syncing auth and profile:', err);
       setUser(null);
       setProfile(null);
     } finally {
@@ -201,6 +210,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (supabase) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        console.info(`[Auth Debug] session changed because onAuthStateChange: ${event}`, {
+          hasSession: Boolean(session),
+          userId: session?.user?.id,
+        });
+
         if (event === 'PASSWORD_RECOVERY') {
           setIsPasswordRecovery(true);
         }
@@ -222,6 +236,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             window.history.replaceState({}, document.title, window.location.pathname);
           }
         } else if (event === 'SIGNED_OUT') {
+          console.info('[Auth Debug] SIGNED_OUT received');
+          console.info('[Auth Debug] clearing user because user explicitly signed out');
           setUser(null);
           setProfile(null);
           setIsDemoUser(false);
@@ -245,6 +261,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanBiz = businessName?.trim() || '';
 
     if (!isSupabaseConfigured || !supabase) {
+      console.warn('[Signup Debug] Supabase authentication is not configured');
       setLoading(false);
       return {
         success: false,
@@ -261,6 +278,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           emailRedirectTo: window.location.origin,
         },
       });
+
+      const hasUser = Boolean(data?.user);
+      const hasSession = Boolean(data?.session);
+
+      console.info('[Signup Debug] 3. Supabase response received');
+      console.info(`[Signup Debug] 4. hasUser = ${hasUser} (id: ${data?.user?.id || 'none'})`);
+      console.info(`[Signup Debug] 5. hasSession = ${hasSession}`);
 
       if (error) {
         setLoading(false);
@@ -280,7 +304,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Supabase email-enumeration protection: If user already exists, Supabase returns data.user with empty identities array
-      if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      if (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
         setLoading(false);
         return {
           success: false,
@@ -288,101 +312,97 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      if (data.user) {
-        const isEmailConfirmationRequired = !data.session && !data.user.confirmed_at && !data.user.email_confirmed_at;
+      if (data?.user) {
+        const activeUser = data.user;
+        console.info('[Auth Debug] Account successfully created in Supabase. Setting user and initializing profile/business.');
+        
+        // Directly establish authenticated state
+        setUser(activeUser);
+        setIsDemoUser(false);
+        localStorage.removeItem('invoiceflow_demo_active');
 
-        if (!isEmailConfirmationRequired && data.session) {
-          // Direct authenticated session available
-          setUser(data.user);
-          setIsDemoUser(false);
-          localStorage.removeItem('invoiceflow_demo_active');
+        // Initialize Profile
+        const newProfile: Profile = {
+          id: activeUser.id,
+          email: cleanEmail,
+          full_name: cleanName || 'User',
+          role: 'owner',
+          created_at: new Date().toISOString(),
+          welcome_email_sent: true,
+          welcome_email_sent_at: new Date().toISOString(),
+        };
 
-          // Initialize Profile
-          const newProfile: Profile = {
-            id: data.user.id,
+        try {
+          await supabase.from('profiles').upsert(newProfile);
+        } catch (e) {
+          console.warn('[Auth] Profiles upsert notice:', e);
+        }
+        setProfile(newProfile);
+
+        // Initialize Business
+        const defaultBizName = cleanBiz || (cleanName ? `${cleanName}'s Business` : 'My Business');
+        try {
+          await supabase.from('businesses').upsert({
+            user_id: activeUser.id,
+            name: defaultBizName,
             email: cleanEmail,
-            full_name: cleanName || 'User',
-            role: 'owner',
-            created_at: new Date().toISOString(),
-            welcome_email_sent: true,
-            welcome_email_sent_at: new Date().toISOString(),
-          };
+            default_currency: 'USD',
+            invoice_prefix: 'INV-',
+            next_invoice_number: 1001,
+            payment_terms: 'Due on receipt',
+          });
+        } catch (e) {
+          console.warn('[Auth] Businesses upsert notice:', e);
+        }
 
-          try {
-            await supabase.from('profiles').upsert(newProfile);
-          } catch (e) {
-            console.warn('Profiles upsert notice:', e);
-          }
-          setProfile(newProfile);
+        // Initialize default free subscription
+        try {
+          await supabase.from('subscriptions').upsert({
+            user_id: activeUser.id,
+            plan: 'free',
+            status: 'active',
+          });
+        } catch (e) {
+          console.warn('[Auth] Subscriptions upsert notice:', e);
+        }
 
-          // Initialize Business
-          const defaultBizName = cleanBiz || (cleanName ? `${cleanName}'s Business` : 'My Business');
-          try {
-            await supabase.from('businesses').upsert({
-              user_id: data.user.id,
-              name: defaultBizName,
-              email: cleanEmail,
-              default_currency: 'USD',
-              invoice_prefix: 'INV-',
-              next_invoice_number: 1001,
-              payment_terms: 'Due on receipt',
-            });
-          } catch (e) {
-            console.warn('Businesses upsert notice:', e);
-          }
-
-          // Initialize default free subscription
-          try {
-            await supabase.from('subscriptions').upsert({
-              user_id: data.user.id,
-              plan: 'free',
-              status: 'active',
-            });
-          } catch (e) {
-            console.warn('Subscriptions upsert notice:', e);
-          }
-
-          // Initialize default reminder settings
-          try {
-            await supabase.from('reminder_settings').upsert({
-              user_id: data.user.id,
-              enabled: true,
-              first_reminder_days: 1,
-              second_reminder_days: 7,
-              final_reminder_days: 14,
-              max_reminders: 3,
-            });
-          } catch (e) {
-            console.warn('Reminder settings notice:', e);
-          }
+        // Initialize default reminder settings
+        try {
+          await supabase.from('reminder_settings').upsert({
+            user_id: activeUser.id,
+            enabled: true,
+            first_reminder_days: 1,
+            second_reminder_days: 7,
+            final_reminder_days: 14,
+            max_reminders: 3,
+          });
+        } catch (e) {
+          console.warn('[Auth] Reminder settings notice:', e);
         }
 
         // Fire background welcome email if not already dispatched in this session
-        const dedupeKey = data.user.id || cleanEmail;
+        const dedupeKey = activeUser.id || cleanEmail;
         if (!dispatchedWelcomeUserIds.has(dedupeKey)) {
           dispatchedWelcomeUserIds.add(dedupeKey);
           dispatchedWelcomeUserIds.add(cleanEmail);
 
           defaultEmailService.sendWelcomeEmail({
             to: { email: cleanEmail, name: cleanName },
-            userId: data.user.id,
+            userId: activeUser.id,
             businessName: cleanBiz,
           }).catch((err) => {
-            console.warn('Non-blocking welcome email delivery notice:', err);
+            console.warn('[Auth] Non-blocking welcome email delivery notice:', err);
           });
         }
 
         setLoading(false);
-        return {
-          success: true,
-          emailConfirmationRequired: isEmailConfirmationRequired,
-        };
+        return { success: true };
       }
 
       setLoading(false);
       return { success: false, error: 'Failed to create user account. Please try again.' };
     } catch (err: any) {
-      console.error('Sign up error:', err);
+      console.error('[Auth] Sign up error:', err);
       setLoading(false);
       return { success: false, error: err.message || 'An unexpected error occurred during signup.' };
     }
@@ -391,6 +411,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signIn = async (email: string, pass: string) => {
     setLoading(true);
     const cleanEmail = email.trim();
+    console.info('[Auth] Sign-in initiated', { email: cleanEmail });
 
     if (!isSupabaseConfigured || !supabase) {
       setLoading(false);
@@ -404,6 +425,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
         password: pass,
+      });
+
+      console.info('[Auth] Supabase signIn response received', {
+        hasUser: Boolean(data?.user),
+        userId: data?.user?.id,
+        hasSession: Boolean(data?.session),
+        hasError: Boolean(error),
+        errorMessage: error?.message,
       });
 
       if (error) {
@@ -422,6 +451,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const { data: { user: verifiedUser } } = await supabase.auth.getUser();
         const currentUser = verifiedUser || data.user;
 
+        console.info('[Auth] Sign-in successful. Setting user session and loading profile.');
         setUser(currentUser);
         setIsDemoUser(false);
         localStorage.removeItem('invoiceflow_demo_active');
@@ -434,7 +464,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
       return { success: false, error: 'Sign in failed. Please try again.' };
     } catch (err: any) {
-      console.error('Sign in error:', err);
+      console.error('[Auth] Sign in error:', err);
       setLoading(false);
       return { success: false, error: err.message || 'An unexpected error occurred during sign in.' };
     }
