@@ -140,6 +140,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (hasAuthParamsInUrl) {
         localStorage.removeItem('invoiceflow_demo_active');
+
+        // Exchange PKCE authorization code if present in search query
+        if (searchStr.includes('code=')) {
+          const searchParams = new URLSearchParams(searchStr);
+          const code = searchParams.get('code');
+          if (code) {
+            try {
+              await supabase.auth.exchangeCodeForSession(code);
+            } catch (exErr) {
+              console.warn('PKCE exchange notice:', exErr);
+            }
+          }
+        } else {
+          // Trigger session retrieval for implicit token hash
+          try {
+            await supabase.auth.getSession();
+          } catch (sessErr) {
+            console.warn('Session retrieval notice:', sessErr);
+          }
+        }
       }
 
       // Verify authenticated user with Supabase Auth
@@ -150,10 +170,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsDemoUser(false);
         localStorage.removeItem('invoiceflow_demo_active');
         await fetchAndEnsureProfile(currentUser);
+
+        // Clean up URL if auth parameters were present
+        if (hasAuthParamsInUrl) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
       } else {
-        setUser(null);
-        setProfile(null);
-        setIsDemoUser(false);
+        const savedDemo = localStorage.getItem('invoiceflow_demo_active');
+        if (savedDemo === 'true' && !hasAuthParamsInUrl) {
+          setUser(DEMO_USER);
+          setProfile(DEMO_PROFILE);
+          setIsDemoUser(true);
+        } else {
+          setUser(null);
+          setProfile(null);
+          setIsDemoUser(false);
+        }
       }
     } catch (err) {
       console.error('Error syncing auth and profile:', err);
@@ -174,7 +206,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         if (session?.user) {
-          // Requirement 1: Use supabase.auth.getUser() to verify identity
+          // Use supabase.auth.getUser() to verify identity
           const { data: { user: verifiedUser } } = await supabase.auth.getUser();
           const activeUser = verifiedUser || session.user;
           setUser(activeUser);
@@ -182,7 +214,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.removeItem('invoiceflow_demo_active');
           await fetchAndEnsureProfile(activeUser);
 
-          if (window.location.hash.includes('access_token=') || window.location.hash.includes('type=') || window.location.search.includes('code=')) {
+          if (
+            window.location.hash.includes('access_token=') ||
+            window.location.hash.includes('type=') ||
+            window.location.search.includes('code=')
+          ) {
             window.history.replaceState({}, document.title, window.location.pathname);
           }
         } else if (event === 'SIGNED_OUT') {
@@ -255,8 +291,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (data.user) {
         const isEmailConfirmationRequired = !data.session && !data.user.confirmed_at && !data.user.email_confirmed_at;
 
-        // If a valid session is created immediately (auto-confirm enabled)
-        if (data.session || !isEmailConfirmationRequired) {
+        if (!isEmailConfirmationRequired && data.session) {
+          // Direct authenticated session available
           setUser(data.user);
           setIsDemoUser(false);
           localStorage.removeItem('invoiceflow_demo_active');

@@ -31,13 +31,20 @@ export const ReceiptViewModal: React.FC<ReceiptViewModalProps> = ({ receipt, isO
   if (!isOpen || !receipt) return null;
 
   const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
     setIsDownloadingPdf(true);
+    showToast('Rendering official receipt PDF...', 'info');
     try {
-      await downloadReceiptPdf(receipt, business);
-      showToast(`Receipt ${receipt.receipt_number} downloaded successfully`, 'success');
+      const filename = `InvoiceFlow-Receipt-${receipt.receipt_number || 'REC'}.pdf`;
+      const success = await downloadReceiptPdf(receipt, business, filename);
+      if (success) {
+        showToast(`${filename} downloaded successfully`, 'success');
+      } else {
+        showToast('Unable to generate receipt PDF. Please try again.', 'error');
+      }
     } catch (e: any) {
-      console.warn('PDF download error:', e);
-      showToast('Failed to download receipt PDF', 'error');
+      console.error('Receipt PDF download error:', e);
+      showToast('Unable to generate receipt PDF. Please try again.', 'error');
     } finally {
       setIsDownloadingPdf(false);
     }

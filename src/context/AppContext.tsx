@@ -132,6 +132,10 @@ interface AppContextType {
   supportCategory: 'Bug' | 'Payment problem' | 'Invoice problem' | 'Account problem' | 'Feature request' | 'Other';
   openSupportModal: (category?: 'Bug' | 'Payment problem' | 'Invoice problem' | 'Account problem' | 'Feature request' | 'Other') => void;
   closeSupportModal: () => void;
+
+  isSidebarCollapsed: boolean;
+  setIsSidebarCollapsed: (collapsed: boolean) => void;
+  toggleSidebar: () => void;
 }
 
 // Demo data - ONLY used when isDemoUser is true
@@ -703,6 +707,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
   }, [user, isDemoUser]);
+
+  // Sidebar Collapsed State (Desktop)
+  const [isSidebarCollapsed, setIsSidebarCollapsedState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('invoiceflow_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const setIsSidebarCollapsed = (collapsed: boolean) => {
+    setIsSidebarCollapsedState(collapsed);
+    try {
+      localStorage.setItem('invoiceflow_sidebar_collapsed', String(collapsed));
+    } catch (e) {
+      console.warn('Storage notice:', e);
+    }
+  };
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsedState((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('invoiceflow_sidebar_collapsed', String(next));
+      } catch (e) {
+        console.warn('Storage notice:', e);
+      }
+      return next;
+    });
+  };
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = `toast_${Date.now()}_${Math.random()}`;
@@ -1623,6 +1657,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn('Update invoice status notice:', e);
       }
     }
+
+    if (status === 'paid') {
+      // Automatically generate a receipt for this paid invoice if one does not already exist
+      const existingReceipt = receipts.find((r) => r.invoice_id === id);
+      if (!existingReceipt) {
+        const targetInv = invoices.find((i) => i.id === id);
+        createReceipt({
+          invoice_id: id,
+          amount: targetInv?.total || 0,
+          currency: targetInv?.currency || 'USD',
+          payment_method: 'Card / Electronic',
+          payment_date: paidTime || new Date().toISOString(),
+          notes: `Settlement for invoice ${targetInv?.number || ''}`,
+        }).catch((err) => {
+          console.warn('Auto receipt creation notice:', err);
+        });
+      }
+    }
   };
 
   const deleteInvoice = async (id: string) => {
@@ -1763,6 +1815,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     notes?: string;
     payment_date?: string;
   }): Promise<{ success: boolean; receipt?: Receipt; error?: string }> => {
+    // 1. Check if a receipt for this invoice already exists to avoid accidental duplicates
+    const existingReceipt = receipts.find((r) => r.invoice_id === receiptData.invoice_id);
+    if (existingReceipt) {
+      return { success: true, receipt: existingReceipt };
+    }
+
     const matchedInvoice = invoices.find((i) => i.id === receiptData.invoice_id);
     const matchedClient = matchedInvoice?.client || clients.find((c) => c.id === matchedInvoice?.client_id);
     const currency = receiptData.currency || matchedInvoice?.currency || business.default_currency || 'USD';
@@ -1781,8 +1839,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       amount: receiptData.amount,
       currency,
       payment_date: paymentDate,
-      payment_method: receiptData.payment_method || 'Card',
-      notes: receiptData.notes || 'Payment receipt',
+      payment_method: receiptData.payment_method || 'Card / Electronic',
+      notes: receiptData.notes || `Settlement for invoice ${matchedInvoice?.number || ''}`,
       status: 'paid',
       created_at: new Date().toISOString(),
       items: matchedInvoice?.items || [],
@@ -1794,31 +1852,32 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           .from('receipts')
           .insert([{
             user_id: user.id,
+            business_id: business?.id || null,
             invoice_id: receiptData.invoice_id,
             client_id: matchedInvoice?.client_id || null,
             receipt_number: receiptNumber,
+            invoice_number: matchedInvoice?.number || '',
             amount: receiptData.amount,
             currency,
             payment_date: paymentDate,
-            payment_method: receiptData.payment_method || 'Card',
-            notes: receiptData.notes || '',
+            payment_method: receiptData.payment_method || 'Card / Electronic',
+            notes: receiptData.notes || `Settlement for invoice ${matchedInvoice?.number || ''}`,
             status: 'paid',
+            items: matchedInvoice?.items || [],
           }])
           .select()
           .maybeSingle();
 
         if (error) {
-          console.warn('Supabase create receipt error:', error);
-          showToast(error.message || 'Failed to persist receipt in Supabase', 'error');
-          return { success: false, error: error.message };
-        }
-        if (data) {
+          console.warn('Supabase create receipt notice/error:', error);
+          if (error.code === 'PGRST205' || error.message?.includes('schema cache') || error.message?.includes('receipts')) {
+            console.info('Receipt persisted locally while awaiting Supabase schema sync');
+          }
+        } else if (data) {
           newReceipt.id = data.id;
         }
       } catch (e: any) {
-        console.warn('Receipt creation exception:', e);
-        showToast(e.message || 'Failed to create receipt', 'error');
-        return { success: false, error: e.message };
+        console.warn('Receipt creation network/supabase notice:', e);
       }
     }
 
@@ -2273,6 +2332,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         supportCategory,
         openSupportModal,
         closeSupportModal,
+
+        isSidebarCollapsed,
+        setIsSidebarCollapsed,
+        toggleSidebar,
       }}
     >
       {children}

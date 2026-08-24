@@ -21,6 +21,8 @@ import {
   Moon,
   LifeBuoy,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -35,7 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNewInvoice,
 }) => {
   const { user, profile, signOut, isDemoUser } = useAuth();
-  const { activePage, setActivePage, business, subscription, openSupportModal } = useApp();
+  const { activePage, setActivePage, business, subscription, openSupportModal, isSidebarCollapsed, toggleSidebar } = useApp();
   const { theme, resolvedTheme, toggleTheme } = useTheme();
   const [isGlobalSearchModalOpen, setIsGlobalSearchModalOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -71,16 +73,33 @@ export const Header: React.FC<HeaderProps> = ({
     <>
       <header className="sticky top-0 z-30 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 px-4 sm:px-6 py-2.5 transition-colors">
         <div className="flex items-center justify-between gap-3 max-w-[1600px] mx-auto">
-          {/* Left: Mobile Toggle + Clean Nav Tabs */}
-          <div className="flex items-center gap-6">
+          {/* Left: Mobile Toggle + Desktop Toggle + Clean Nav Tabs */}
+          <div className="flex items-center gap-3 sm:gap-6">
+            {/* Mobile Menu Toggle Button */}
             <button
               onClick={onOpenMobileSidebar}
               className="p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl lg:hidden transition-colors cursor-pointer"
+              title="Open Navigation Menu"
+              aria-label="Open Navigation Menu"
             >
               <Menu className="w-5 h-5" />
             </button>
 
-            {/* Reference Design: Top Level View Tabs */}
+            {/* Desktop Sidebar Quick Toggle */}
+            <button
+              onClick={toggleSidebar}
+              className="hidden lg:flex items-center justify-center p-2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+              title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {isSidebarCollapsed ? (
+                <PanelLeftOpen className="w-4 h-4" />
+              ) : (
+                <PanelLeftClose className="w-4 h-4" />
+              )}
+            </button>
+
+            {/* Top Level View Tabs */}
             <nav className="hidden md:flex items-center gap-6">
               {navTabs.map((tab) => {
                 const isActive =

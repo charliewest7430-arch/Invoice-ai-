@@ -71,15 +71,23 @@ export const InvoiceDetailPage: React.FC = () => {
   }
 
   const handleDownloadPdf = async () => {
+    if (isDownloading) return;
     setIsDownloading(true);
     showToast('Rendering professional PDF...', 'info');
-    const success = await downloadInvoicePdf('printable-invoice-element', `Invoice-${invoice.number}.pdf`);
-    setIsDownloading(false);
-    if (success) {
-      logActivity('pdf_downloaded', `Downloaded PDF for invoice ${invoice.number} (${invoice.currency} ${(Number(invoice.total) || 0).toFixed(2)})`);
-      showToast(`Invoice-${invoice.number}.pdf downloaded!`, 'success');
-    } else {
-      showToast("We couldn't generate the PDF. Please try again.", 'error');
+    try {
+      const filename = `InvoiceFlow-Invoice-${invoice.number || 'INV'}.pdf`;
+      const success = await downloadInvoicePdf(invoice, business, filename);
+      if (success) {
+        logActivity('pdf_downloaded', `Downloaded PDF for invoice ${invoice.number} (${invoice.currency} ${(Number(invoice.total) || 0).toFixed(2)})`);
+        showToast(`${filename} downloaded successfully!`, 'success');
+      } else {
+        showToast('Unable to generate the PDF. Please try again.', 'error');
+      }
+    } catch (err: any) {
+      console.error('Invoice PDF download error:', err);
+      showToast('Unable to generate the PDF. Please try again.', 'error');
+    } finally {
+      setIsDownloading(false);
     }
   };
 

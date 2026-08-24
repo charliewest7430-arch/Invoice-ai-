@@ -19,6 +19,7 @@ import {
   FileCheck,
   ArrowUpRight,
   Filter,
+  Loader2,
 } from 'lucide-react';
 
 export const ReceiptsPage: React.FC = () => {
@@ -56,15 +57,32 @@ export const ReceiptsPage: React.FC = () => {
     (inv) => inv.status === 'paid' && !receipts.some((r) => r.invoice_id === inv.id)
   );
 
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
   const handleOpenReceipt = (receipt: Receipt) => {
     setSelectedReceipt(receipt);
     setIsViewModalOpen(true);
   };
 
-  const handleDownload = (receipt: Receipt, e: React.MouseEvent) => {
+  const handleDownload = async (receipt: Receipt, e: React.MouseEvent) => {
     e.stopPropagation();
-    setSelectedReceipt(receipt);
-    setIsViewModalOpen(true);
+    if (downloadingId === receipt.id) return;
+    setDownloadingId(receipt.id);
+    showToast('Rendering official receipt PDF...', 'info');
+    try {
+      const filename = `InvoiceFlow-Receipt-${receipt.receipt_number || 'REC'}.pdf`;
+      const success = await downloadReceiptPdf(receipt, business, filename);
+      if (success) {
+        showToast(`${filename} downloaded successfully`, 'success');
+      } else {
+        showToast('Unable to generate receipt PDF. Please try again.', 'error');
+      }
+    } catch (err: any) {
+      console.error('Receipt download error:', err);
+      showToast('Unable to generate receipt PDF. Please try again.', 'error');
+    } finally {
+      setDownloadingId(null);
+    }
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
@@ -278,10 +296,15 @@ export const ReceiptsPage: React.FC = () => {
                         </button>
                         <button
                           onClick={(e) => handleDownload(receipt, e)}
+                          disabled={downloadingId === receipt.id}
                           title="Download PDF"
-                          className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer"
+                          className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                         >
-                          <Download className="w-4 h-4" />
+                          {downloadingId === receipt.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
+                          ) : (
+                            <Download className="w-4 h-4" />
+                          )}
                         </button>
                         <button
                           onClick={(e) => handleDelete(receipt.id, e)}

@@ -95,6 +95,9 @@ export const LandingPage: React.FC = () => {
         setErrorMsg(res.error || 'Failed to sign up');
       } else if (res.emailConfirmationRequired) {
         setEmailConfirmationSent(true);
+      } else {
+        // Direct authentication established - dismiss modal and transition to dashboard
+        resetFormState(null);
       }
     } else if (authModalMode === 'forgot_password') {
       try {
@@ -107,6 +110,9 @@ export const LandingPage: React.FC = () => {
       const res = await signIn(email.trim(), password);
       if (!res.success) {
         setErrorMsg(res.error || 'Failed to sign in');
+      } else {
+        // Direct authentication established
+        resetFormState(null);
       }
     }
 
