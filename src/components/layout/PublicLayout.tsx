@@ -279,6 +279,27 @@ export const PublicLayout: React.FC<PublicLayoutProps> = ({
             >
               Invoicing Blog & Guides
             </a>
+            <a
+              href="/about"
+              onClick={(e) => navigateTo('/about', e)}
+              className="block px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg"
+            >
+              About InvoiceFlow
+            </a>
+            <a
+              href="/faq"
+              onClick={(e) => navigateTo('/faq', e)}
+              className="block px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg"
+            >
+              Frequently Asked Questions (FAQ)
+            </a>
+            <a
+              href="/contact"
+              onClick={(e) => navigateTo('/contact', e)}
+              className="block px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 rounded-lg"
+            >
+              Contact Support
+            </a>
             <div className="pt-3 border-t border-slate-100 flex flex-col gap-2">
               <button
                 onClick={() => {
@@ -316,8 +337,8 @@ export const PublicLayout: React.FC<PublicLayoutProps> = ({
       {/* Reusable Site Footer */}
       <footer className="border-t border-slate-200/80 py-12 bg-white text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-            <div className="space-y-3 md:col-span-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-8">
+            <div className="space-y-3 sm:col-span-2 lg:col-span-1">
               <div className="flex items-center gap-2 font-bold text-slate-900">
                 <Receipt className="w-5 h-5 text-blue-600" aria-hidden="true" />
                 <span className="text-sm">InvoiceFlow</span>
@@ -405,20 +426,53 @@ export const PublicLayout: React.FC<PublicLayoutProps> = ({
                 </li>
                 <li>
                   <a
-                    href="/blog"
-                    onClick={(e) => navigateTo('/blog', e)}
-                    className="hover:text-blue-600 transition-colors"
-                  >
-                    Invoicing Blog & Guides
-                  </a>
-                </li>
-                <li>
-                  <a
                     href="/#pricing"
                     onClick={(e) => navigateTo('/#pricing', e)}
                     className="hover:text-blue-600 transition-colors"
                   >
                     Pricing Plans
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            <div className="space-y-3">
+              <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Company & Support</h4>
+              <ul className="space-y-2 text-slate-600">
+                <li>
+                  <a
+                    href="/about"
+                    onClick={(e) => navigateTo('/about', e)}
+                    className="hover:text-blue-600 transition-colors"
+                  >
+                    About InvoiceFlow
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="/contact"
+                    onClick={(e) => navigateTo('/contact', e)}
+                    className="hover:text-blue-600 transition-colors"
+                  >
+                    Contact Support
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="/faq"
+                    onClick={(e) => navigateTo('/faq', e)}
+                    className="hover:text-blue-600 transition-colors"
+                  >
+                    Frequently Asked Questions
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="/blog"
+                    onClick={(e) => navigateTo('/blog', e)}
+                    className="hover:text-blue-600 transition-colors"
+                  >
+                    Invoicing Blog & Guides
                   </a>
                 </li>
               </ul>

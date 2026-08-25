@@ -7,6 +7,9 @@ Allow: /invoice-maker
 Allow: /invoice-software-small-business
 Allow: /freelance-invoice-generator
 Allow: /online-invoice-generator
+Allow: /about
+Allow: /contact
+Allow: /faq
 Allow: /blog
 Allow: /blog/
 

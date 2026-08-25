@@ -13,6 +13,9 @@ import { InvoiceMakerPage } from './pages/seo/InvoiceMakerPage';
 import { SmallBusinessInvoiceSoftwarePage } from './pages/seo/SmallBusinessInvoiceSoftwarePage';
 import { FreelanceInvoiceGeneratorPage } from './pages/seo/FreelanceInvoiceGeneratorPage';
 import { OnlineInvoiceGeneratorPage } from './pages/seo/OnlineInvoiceGeneratorPage';
+import { AboutPage } from './pages/AboutPage';
+import { ContactPage } from './pages/ContactPage';
+import { FaqPage } from './pages/FaqPage';
 import { BlogIndexPage } from './pages/blog/BlogIndexPage';
 import { BlogPostPage } from './pages/blog/BlogPostPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
@@ -159,6 +162,27 @@ const MainAppContent: React.FC = () => {
       return (
         <PublicLayout activePath="/online-invoice-generator" onNavigate={handlePublicNavigate}>
           <OnlineInvoiceGeneratorPage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/about') {
+      return (
+        <PublicLayout activePath="/about" onNavigate={handlePublicNavigate}>
+          <AboutPage onNavigate={handlePublicNavigate} />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/contact') {
+      return (
+        <PublicLayout activePath="/contact" onNavigate={handlePublicNavigate}>
+          <ContactPage onNavigate={handlePublicNavigate} />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/faq') {
+      return (
+        <PublicLayout activePath="/faq" onNavigate={handlePublicNavigate}>
+          <FaqPage onNavigate={handlePublicNavigate} />
         </PublicLayout>
       );
     }
