@@ -1,15 +1,10 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useTheme, ThemePreference } from '../context/ThemeContext';
-import { isSupabaseConfigured } from '../lib/supabaseClient';
-import { SUPABASE_SCHEMA_SQL } from '../lib/supabaseSchema';
 import { SUPPORTED_CURRENCIES } from '../types';
 import { SUPPORT_EMAIL } from '../components/common/SupportModal';
 import {
-  Settings,
   Building2,
-  Database,
-  Image,
   Key,
   Copy,
   Check,
@@ -19,8 +14,6 @@ import {
   Monitor,
   LifeBuoy,
   Mail,
-  Send,
-  Sparkles,
 } from 'lucide-react';
 
 export const SettingsPage: React.FC = () => {
@@ -39,7 +32,6 @@ export const SettingsPage: React.FC = () => {
   const [bankDetails, setBankDetails] = useState(business.bank_details || '');
   const [logoUrl, setLogoUrl] = useState(business.logo_url || '');
 
-  const [isCopiedSql, setIsCopiedSql] = useState(false);
   const [isCopiedEmail, setIsCopiedEmail] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -61,13 +53,6 @@ export const SettingsPage: React.FC = () => {
     });
     setIsSaving(false);
     showToast('Business profile settings saved!', 'success');
-  };
-
-  const copySqlToClipboard = () => {
-    navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);
-    setIsCopiedSql(true);
-    showToast('Supabase SQL schema copied to clipboard!', 'success');
-    setTimeout(() => setIsCopiedSql(false), 2000);
   };
 
   const copySupportEmail = () => {
@@ -104,7 +89,7 @@ export const SettingsPage: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">Business Settings</h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Manage appearance, invoice branding, tax details, currency, and database configuration</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Manage appearance, invoice branding, tax details, currency, and payment terms</p>
         </div>
       </div>
 
@@ -344,31 +329,6 @@ export const SettingsPage: React.FC = () => {
           </div>
           <span className="text-[11px] text-slate-400 dark:text-slate-500 hidden sm:inline">Guaranteed response within 24 hours</span>
         </div>
-      </div>
-
-      {/* Supabase Schema Helper */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-4 shadow-2xs transition-colors">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Database className={`w-5 h-5 ${isSupabaseConfigured ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'}`} />
-            <h3 className="font-extrabold text-slate-900 dark:text-white text-sm">Supabase Database Synchronization</h3>
-          </div>
-          <button
-            onClick={copySqlToClipboard}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 shadow-2xs cursor-pointer"
-          >
-            {isCopiedSql ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />}
-            <span>{isCopiedSql ? 'Copied' : 'Copy SQL Schema'}</span>
-          </button>
-        </div>
-
-        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-          The app is configured to seamlessly isolate user data using Supabase Row Level Security (RLS). You can use the provided SQL script to set up or verify table structures in your Supabase project.
-        </p>
-
-        <pre className="p-3.5 bg-slate-900 dark:bg-slate-950 border border-slate-800 dark:border-slate-800/80 rounded-2xl text-[11px] font-mono text-blue-300 overflow-x-auto max-h-40 leading-relaxed">
-          {SUPABASE_SCHEMA_SQL}
-        </pre>
       </div>
     </div>
   );

@@ -22,6 +22,7 @@ import {
   TRIAL_DAYS,
 } from '../types';
 import { defaultEmailService } from '../services/emailService';
+import { trackStartTrial, trackPurchase } from '../lib/tiktokPixel';
 
 export type NavigationPage =
   | 'dashboard'
@@ -1086,7 +1087,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           };
           try {
             const { data: createdSub } = await supabase.from('subscriptions').insert([defaultSub]).select().maybeSingle();
-            if (createdSub) setSubscription(createdSub);
+            if (createdSub) {
+              setSubscription(createdSub);
+              trackStartTrial({ plan: 'pro_trial', userId: user.id, value: 0, currency: 'USD' });
+            }
           } catch (e) {
             console.warn('Subscription creation notice:', e);
           }
@@ -1782,6 +1786,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logActivity('subscription_upgraded', `Upgraded subscription to ${plan.toUpperCase()} Plan (Ref: ${paystackRef})`);
     showToast(`🎉 Subscription successfully upgraded to ${plan.toUpperCase()} Plan! Pro features unlocked.`, 'success');
 
+    // Track TikTok Purchase event with verified payment amount and currency (deduplicated by paystackRef)
+    try {
+      trackPurchase({
+        value: newPayment.amount,
+        currency: newPayment.currency || 'USD',
+        order_id: paystackRef,
+        content_id: plan,
+        content_name: `InvoiceFlow ${plan.toUpperCase()} Subscription`,
+        content_type: 'product',
+      });
+    } catch (ttErr) {
+      console.warn('[AppContext] TikTok Purchase tracking notice:', ttErr);
+    }
+
     if (isSupabaseConfigured && supabase && user && !isDemoUser) {
       try {
         await supabase.from('subscriptions').upsert({
@@ -1839,6 +1857,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         console.warn('Start trial notice:', e);
       }
     }
+
+    // Track TikTok StartTrial event
+    try {
+      trackStartTrial({ plan: 'pro_trial', userId: user?.id, value: 0, currency: 'USD' });
+    } catch (ttErr) {
+      console.warn('[AppContext] TikTok StartTrial notice:', ttErr);
+    }
+
     showToast('🎉 Your 7-day free trial is now active! All Pro features unlocked.', 'success');
     return true;
   };

@@ -1,0 +1,16 @@
+User-agent: *
+Allow: /
+Allow: /ai-invoice-generator
+Allow: /free-invoice-generator
+Allow: /invoice-generator
+Allow: /invoice-maker
+Allow: /invoice-software-small-business
+Allow: /freelance-invoice-generator
+Allow: /online-invoice-generator
+Allow: /blog
+Allow: /blog/
+
+Disallow: /api/
+Disallow: /reset-password
+
+Sitemap: https://invoiceflow.com/sitemap.xml

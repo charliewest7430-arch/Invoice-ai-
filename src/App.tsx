@@ -1,10 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { LandingPage } from './pages/LandingPage';
+import { PublicLayout } from './components/layout/PublicLayout';
+import { AiInvoiceGeneratorPage } from './pages/seo/AiInvoiceGeneratorPage';
+import { FreeInvoiceGeneratorPage } from './pages/seo/FreeInvoiceGeneratorPage';
+import { InvoiceGeneratorPage } from './pages/seo/InvoiceGeneratorPage';
+import { InvoiceMakerPage } from './pages/seo/InvoiceMakerPage';
+import { SmallBusinessInvoiceSoftwarePage } from './pages/seo/SmallBusinessInvoiceSoftwarePage';
+import { FreelanceInvoiceGeneratorPage } from './pages/seo/FreelanceInvoiceGeneratorPage';
+import { OnlineInvoiceGeneratorPage } from './pages/seo/OnlineInvoiceGeneratorPage';
+import { BlogIndexPage } from './pages/blog/BlogIndexPage';
+import { BlogPostPage } from './pages/blog/BlogPostPage';
 import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -25,6 +35,7 @@ import { AiInvoiceModal } from './components/invoice/AiInvoiceModal';
 import { AuthUpgradeModal } from './components/auth/AuthUpgradeModal';
 import { SupportModal } from './components/common/SupportModal';
 import { ToastContainer } from './components/common/Toast';
+import { initTikTokPixel, trackPageView } from './lib/tiktokPixel';
 
 const MainAppContent: React.FC = () => {
   const { user, isAuthenticated, isDemoUser, isPasswordRecovery, loading } = useAuth();
@@ -43,13 +54,35 @@ const MainAppContent: React.FC = () => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
 
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
+  useEffect(() => {
+    const handleLocationChange = () => {
+      setCurrentPath(window.location.pathname);
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, []);
+
   const isResetPasswordRoute =
     isPasswordRecovery ||
-    window.location.pathname === '/reset-password' ||
-    window.location.pathname === '/reset-password/' ||
-    window.location.pathname.startsWith('/reset-password') ||
+    currentPath === '/reset-password' ||
+    currentPath === '/reset-password/' ||
+    currentPath.startsWith('/reset-password') ||
     window.location.hash.includes('type=recovery') ||
     window.location.search.includes('type=recovery');
+
+  // Track PageView on SPA page navigation
+  useEffect(() => {
+    if (loading) return;
+    if (isResetPasswordRoute) {
+      trackPageView('Reset Password');
+    } else if (!isAuthenticated && !isDemoUser) {
+      trackPageView(`Public Page: ${currentPath}`);
+    } else if (activePage) {
+      trackPageView(activePage);
+    }
+  }, [activePage, isAuthenticated, isDemoUser, isResetPasswordRoute, loading, currentPath]);
 
   if (isResetPasswordRoute) {
     console.info('[Route Debug] rendering ResetPasswordPage (password recovery active)');
@@ -69,10 +102,83 @@ const MainAppContent: React.FC = () => {
     );
   }
 
-  // If user is not signed in and not in demo mode, show Landing Page
+  // If user is not signed in and not in demo mode, show Landing Page or corresponding SEO Landing Page
   if (!isAuthenticated && !isDemoUser) {
-    console.info('[Route Debug] redirecting to LandingPage because user is unauthenticated and demo mode is inactive');
-    return <LandingPage />;
+    const normalizedPath = currentPath.replace(/\/$/, '') || '/';
+    console.info(`[Route Debug] rendering public page for path: ${normalizedPath}`);
+
+    const handlePublicNavigate = (path: string) => {
+      window.history.pushState({}, '', path);
+      setCurrentPath(path);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    if (normalizedPath === '/ai-invoice-generator') {
+      return (
+        <PublicLayout activePath="/ai-invoice-generator" onNavigate={handlePublicNavigate}>
+          <AiInvoiceGeneratorPage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/free-invoice-generator') {
+      return (
+        <PublicLayout activePath="/free-invoice-generator" onNavigate={handlePublicNavigate}>
+          <FreeInvoiceGeneratorPage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/invoice-generator') {
+      return (
+        <PublicLayout activePath="/invoice-generator" onNavigate={handlePublicNavigate}>
+          <InvoiceGeneratorPage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/invoice-maker') {
+      return (
+        <PublicLayout activePath="/invoice-maker" onNavigate={handlePublicNavigate}>
+          <InvoiceMakerPage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/invoice-software-small-business') {
+      return (
+        <PublicLayout activePath="/invoice-software-small-business" onNavigate={handlePublicNavigate}>
+          <SmallBusinessInvoiceSoftwarePage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/freelance-invoice-generator') {
+      return (
+        <PublicLayout activePath="/freelance-invoice-generator" onNavigate={handlePublicNavigate}>
+          <FreelanceInvoiceGeneratorPage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/online-invoice-generator') {
+      return (
+        <PublicLayout activePath="/online-invoice-generator" onNavigate={handlePublicNavigate}>
+          <OnlineInvoiceGeneratorPage />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath === '/blog') {
+      return (
+        <PublicLayout activePath="/blog" onNavigate={handlePublicNavigate}>
+          <BlogIndexPage onNavigate={handlePublicNavigate} />
+        </PublicLayout>
+      );
+    }
+    if (normalizedPath.startsWith('/blog/')) {
+      const slug = normalizedPath.replace('/blog/', '').trim();
+      return (
+        <PublicLayout activePath="/blog" onNavigate={handlePublicNavigate}>
+          <BlogPostPage slug={slug} onNavigate={handlePublicNavigate} />
+        </PublicLayout>
+      );
+    }
+
+    return <LandingPage onNavigate={handlePublicNavigate} />;
   }
 
   // If user signed in for the first time and hasn't set up business, show Onboarding
@@ -182,6 +288,10 @@ const MainAppContent: React.FC = () => {
 };
 
 export function App() {
+  useEffect(() => {
+    initTikTokPixel();
+  }, []);
+
   return (
     <ThemeProvider>
       <AuthProvider>

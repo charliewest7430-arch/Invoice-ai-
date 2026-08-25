@@ -3,6 +3,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
 import { Profile } from '../types';
 import { defaultEmailService } from '../services/emailService';
+import { trackCompleteRegistration, trackStartTrial } from '../lib/tiktokPixel';
 
 // Primary production origin for live deployments
 const PRODUCTION_APP_URL = 'https://www.invoiceflowai.cloud';
@@ -413,6 +414,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }).catch((err) => {
             console.warn('[Auth] Non-blocking welcome email delivery notice:', err);
           });
+        }
+
+        // Track TikTok CompleteRegistration event after verified account creation
+        try {
+          trackCompleteRegistration({ method: 'email', userId: activeUser.id });
+        } catch (ttErr) {
+          console.warn('[Auth] TikTok CompleteRegistration notice:', ttErr);
         }
 
         return { success: true };

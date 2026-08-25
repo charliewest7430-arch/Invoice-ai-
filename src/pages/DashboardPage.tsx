@@ -247,42 +247,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   return (
     <div className="space-y-6 animate-fade-in text-slate-800">
-      {/* Top Filter Bar: Currency Switcher & Quick Stats Info */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 sm:px-5 rounded-2xl border border-slate-200/80 shadow-2xs">
+      {/* Top Filter Bar: Quick Stats Info */}
+      <div className="flex items-center justify-between gap-3 bg-white p-3.5 sm:px-5 rounded-2xl border border-slate-200/80 shadow-2xs">
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
           <span className="w-2 h-2 rounded-full bg-emerald-500" />
           <span>Real-time Financial Overview for <strong>{business?.name || 'Your Business'}</strong></span>
-        </div>
-
-        {/* Currency Switcher Dropdown */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl">
-            <Globe2 className="w-4 h-4 text-blue-600 shrink-0" />
-            <select
-              id="currency-switcher"
-              value={selectedCurrencyView}
-              onChange={(e) => setSelectedCurrencyView(e.target.value)}
-              className="bg-transparent text-xs font-bold text-slate-800 focus:outline-none cursor-pointer pr-1"
-            >
-              <option value="ALL">
-                All Currencies (Converted to {baseCurrency})
-              </option>
-              {availableCurrencyOptions.map((curr) => (
-                <option key={curr.code} value={curr.code}>
-                  {curr.label}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={syncRates}
-              title="Sync latest live exchange rates"
-              className={`p-1 hover:bg-slate-200 text-slate-400 hover:text-slate-700 rounded-lg transition-all ${
-                isSyncingRates ? 'animate-spin text-blue-600' : ''
-              }`}
-            >
-              <RefreshCw className="w-3 h-3" />
-            </button>
-          </div>
         </div>
       </div>
 

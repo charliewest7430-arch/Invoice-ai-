@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { openPaystackModal, getPaystackPublicKey } from '../lib/paystack';
 import { useAuth } from '../context/AuthContext';
 import { exportPaymentsToCsv } from '../lib/csvExport';
 import { PRO_MONTHLY, ENTERPRISE_MONTHLY, TRIAL_DAYS } from '../types';
+import { trackViewContent } from '../lib/tiktokPixel';
 import {
   CreditCard,
   ShieldCheck,
@@ -50,6 +51,16 @@ export const BillingPage: React.FC = () => {
   const isTrialExpired =
     subscription.status === 'trial_expired' ||
     (Boolean(subscription.trial_ends_at) && new Date(subscription.trial_ends_at!).getTime() <= Date.now() && subscription.plan === 'free');
+
+  useEffect(() => {
+    trackViewContent({
+      content_id: 'billing_pricing_plans',
+      content_name: 'InvoiceFlow Pro & Enterprise Pricing Plans',
+      content_type: 'product_group',
+      value: PRO_MONTHLY,
+      currency: 'USD',
+    });
+  }, []);
 
   const handleUpgrade = (planName: 'pro' | 'enterprise') => {
     // If user is unauthenticated or in Demo Mode, prompt for account creation/signin
