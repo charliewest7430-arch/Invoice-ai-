@@ -13,4 +13,4 @@ Allow: /blog/
 Disallow: /api/
 Disallow: /reset-password
 
-Sitemap: https://invoiceflow.com/sitemap.xml
+Sitemap: https://invoiceflowai.cloud/sitemap.xml
