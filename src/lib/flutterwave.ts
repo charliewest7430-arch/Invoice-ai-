@@ -11,6 +11,7 @@ export interface FlutterwaveCheckoutOptions {
   email: string;
   name?: string;
   businessId?: string;
+  mode?: 'trial' | 'subscription';
   callbackUrl?: string;
   onSuccess?: (response: { reference: string; status: string; data?: any }) => void;
   onError?: (error: { message: string; data?: any }) => void;
@@ -22,6 +23,7 @@ export interface FlutterwaveInitResponse {
   link?: string;
   tx_ref: string;
   plan: 'pro' | 'enterprise';
+  mode?: 'trial' | 'subscription';
   amount: number;
   currency: string;
   devMode?: boolean;
@@ -35,14 +37,15 @@ export interface FlutterwaveInitResponse {
  */
 export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOptions): Promise<void> {
   const planName = options.plan;
-  const expectedAmount = planName === 'pro' ? PRO_PRICE : ENTERPRISE_PRICE;
+  const isTrial = options.mode === 'trial';
+  const expectedAmount = isTrial ? 1.0 : (planName === 'pro' ? PRO_PRICE : ENTERPRISE_PRICE);
 
-  console.log(`💳 [Flutterwave Client] Initializing checkout for ${planName.toUpperCase()} Plan ($${expectedAmount}/mo)...`);
+  console.log(`💳 [Flutterwave Client] Initializing ${isTrial ? '7-day trial card authorization' : 'subscription checkout'} for ${planName.toUpperCase()} Plan...`);
 
   try {
     const authHeaders = await getAuthHeader();
     const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://www.invoiceflowai.cloud';
-    const callbackUrl = options.callbackUrl || `${currentOrigin}/billing?flw_callback=1&plan=${planName}`;
+    const callbackUrl = options.callbackUrl || `${currentOrigin}/billing?flw_callback=1&plan=${planName}&mode=${options.mode || 'subscription'}`;
 
     const res = await fetch('/api/flutterwave/initialize', {
       method: 'POST',
@@ -52,12 +55,14 @@ export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOp
       },
       body: JSON.stringify({
         plan: planName,
+        mode: options.mode || 'subscription',
         email: options.email,
         name: options.name,
         callbackUrl,
         metadata: {
           businessId: options.businessId,
           plan: planName,
+          mode: options.mode || 'subscription',
         },
       }),
     });
@@ -81,6 +86,7 @@ export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOp
         sessionStorage.setItem('invoiceflow_flw_pending_tx', JSON.stringify({
           tx_ref: initData.tx_ref,
           plan: planName,
+          mode: options.mode || 'subscription',
           amount: initData.amount,
         }));
       } catch (e) {
@@ -96,6 +102,7 @@ export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOp
       const verifyRes = await verifyFlutterwaveTransaction({
         tx_ref: initData.tx_ref,
         plan: planName,
+        mode: options.mode || 'subscription',
         simulated: true,
       });
 
@@ -131,6 +138,7 @@ export async function verifyFlutterwaveTransaction(params: {
   transaction_id?: string | number;
   tx_ref?: string;
   plan?: 'pro' | 'enterprise';
+  mode?: 'trial' | 'subscription';
   simulated?: boolean;
 }): Promise<{ success: boolean; message?: string; data?: any }> {
   try {
@@ -159,6 +167,40 @@ export async function verifyFlutterwaveTransaction(params: {
     return {
       success: false,
       message: err.message || 'Network error during payment verification.',
+    };
+  }
+}
+
+/**
+ * Cancels a subscription / trial via server-side API.
+ */
+export async function cancelSubscriptionApi(): Promise<{ success: boolean; message?: string; data?: any }> {
+  try {
+    const authHeaders = await getAuthHeader();
+    const res = await fetch('/api/billing/cancel', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+      },
+      body: JSON.stringify({}),
+    });
+
+    const data = await res.json();
+    if (res.ok && (data.status === 'success' || data.success === true)) {
+      return { success: true, data: data.data || data };
+    }
+
+    return {
+      success: false,
+      message: data.message || 'Failed to cancel subscription.',
+      data,
+    };
+  } catch (err: any) {
+    console.error('❌ Cancel Subscription Network Error:', err);
+    return {
+      success: false,
+      message: err.message || 'Network error while canceling subscription.',
     };
   }
 }

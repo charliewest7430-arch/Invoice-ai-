@@ -267,18 +267,24 @@ export interface Subscription {
   id: string;
   user_id: string;
   plan: PlanType;
-  status: 'active' | 'past_due' | 'canceled' | 'trialing' | 'trial_expired';
+  status: 'active' | 'past_due' | 'canceled' | 'trialing' | 'trial_expired' | 'payment_failed';
   flutterwave_ref?: string;
   flutterwave_transaction_id?: string;
   payment_provider?: 'flutterwave' | 'paystack' | string;
+  card_token?: string;
+  card_last4?: string;
+  card_brand?: string;
+  card_exp?: string;
   paystack_customer_code?: string;
   paystack_subscription_code?: string;
   paystack_email_token?: string;
+  current_period_start?: string;
   current_period_end?: string;
   trial_started_at?: string;
   trial_ends_at?: string;
   trial_used?: boolean;
   next_billing_date?: string;
+  cancelled_at?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -297,6 +303,7 @@ export interface Payment {
   currency: string;
   status: 'success' | 'failed' | 'pending';
   channel?: string;
+  notes?: string;
   paid_at: string;
   created_at: string;
 }

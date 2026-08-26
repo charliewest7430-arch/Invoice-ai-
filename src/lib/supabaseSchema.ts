@@ -97,33 +97,95 @@ CREATE TABLE IF NOT EXISTS public.subscriptions (
   user_id UUID NOT NULL UNIQUE REFERENCES auth.users(id) ON DELETE CASCADE,
   plan TEXT DEFAULT 'free',
   status TEXT DEFAULT 'active',
+  flutterwave_ref TEXT,
+  flutterwave_transaction_id TEXT,
+  payment_provider TEXT DEFAULT 'flutterwave',
+  card_token TEXT,
+  card_last4 TEXT,
+  card_brand TEXT,
+  card_exp TEXT,
   paystack_customer_code TEXT,
   paystack_subscription_code TEXT,
   paystack_email_token TEXT,
   trial_started_at TIMESTAMPTZ,
   trial_ends_at TIMESTAMPTZ,
+  trial_used BOOLEAN DEFAULT false,
+  current_period_start TIMESTAMPTZ,
   current_period_end TIMESTAMPTZ,
+  next_billing_date TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Ensure trial columns exist on existing subscriptions tables
+-- Ensure trial, card tokenization, and Flutterwave columns exist on existing subscriptions tables
 ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
 ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS trial_used BOOLEAN DEFAULT false;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS flutterwave_ref TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS flutterwave_transaction_id TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS payment_provider TEXT DEFAULT 'flutterwave';
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS card_token TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS card_last4 TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS card_brand TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS card_exp TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS current_period_start TIMESTAMPTZ;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS next_billing_date TIMESTAMPTZ;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 
 -- 7. PAYMENTS TABLE
 CREATE TABLE IF NOT EXISTS public.payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   invoice_id UUID REFERENCES public.invoices(id) ON DELETE SET NULL,
-  paystack_reference TEXT UNIQUE,
+  flutterwave_ref TEXT,
+  flutterwave_transaction_id TEXT,
+  payment_provider TEXT DEFAULT 'flutterwave',
+  paystack_reference TEXT,
   amount NUMERIC(12,2) NOT NULL,
   currency TEXT DEFAULT 'USD',
   status TEXT DEFAULT 'pending',
   channel TEXT,
+  notes TEXT,
   paid_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure Flutterwave payment columns exist
+ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS flutterwave_ref TEXT;
+ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS flutterwave_transaction_id TEXT;
+ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS payment_provider TEXT DEFAULT 'flutterwave';
+ALTER TABLE public.payments ADD COLUMN IF NOT EXISTS notes TEXT;
+
+-- Prevent duplicate payment records at database level
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_flutterwave_ref ON public.payments(flutterwave_ref) WHERE flutterwave_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_payments_flutterwave_tx_id ON public.payments(flutterwave_transaction_id) WHERE flutterwave_transaction_id IS NOT NULL;
+
+-- 7.1 BILLING CYCLES / IDEMPOTENT ATTEMPT TRACKER
+CREATE TABLE IF NOT EXISTS public.billing_cycles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  cycle_key TEXT NOT NULL,
+  tx_ref TEXT NOT NULL,
+  plan TEXT NOT NULL DEFAULT 'pro',
+  amount NUMERIC(12,2) NOT NULL,
+  status TEXT NOT NULL DEFAULT 'processing',
+  attempt_count INT DEFAULT 1,
+  locked_until TIMESTAMPTZ,
+  error_message TEXT,
+  flutterwave_transaction_id TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT uq_billing_cycles_user_cycle UNIQUE (user_id, cycle_key)
+);
+
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS billing_lock_until TIMESTAMPTZ;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS last_billed_period TEXT;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS retry_count INT DEFAULT 0;
+ALTER TABLE public.subscriptions ADD COLUMN IF NOT EXISTS last_payment_error TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_billing_cycles_user_id ON public.billing_cycles(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_cycles_tx_ref ON public.billing_cycles(tx_ref);
 
 -- 8. USAGE TABLE
 CREATE TABLE IF NOT EXISTS public.usage (
@@ -244,9 +306,9 @@ DROP POLICY IF EXISTS "Users can insert own subscriptions" ON public.subscriptio
 DROP POLICY IF EXISTS "Users can update own subscriptions" ON public.subscriptions;
 DROP POLICY IF EXISTS "Users can delete own subscriptions" ON public.subscriptions;
 CREATE POLICY "Users can view own subscriptions" ON public.subscriptions FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert own subscriptions" ON public.subscriptions FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can update own subscriptions" ON public.subscriptions FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can delete own subscriptions" ON public.subscriptions FOR DELETE USING (auth.uid() = user_id);
+-- Subscriptions modifications (plan, status, card_token) are protected and restricted to backend service role
+-- Authenticated users can only create initial free subscription record for their own account
+CREATE POLICY "Users can create initial subscription" ON public.subscriptions FOR INSERT WITH CHECK (auth.uid() = user_id AND (plan IS NULL OR plan = 'free'));
 
 DROP POLICY IF EXISTS "Users access own payments" ON public.payments;
 DROP POLICY IF EXISTS "Users can access own payments" ON public.payments;
@@ -254,10 +316,12 @@ DROP POLICY IF EXISTS "Users can view own payments" ON public.payments;
 DROP POLICY IF EXISTS "Users can insert own payments" ON public.payments;
 DROP POLICY IF EXISTS "Users can update own payments" ON public.payments;
 DROP POLICY IF EXISTS "Users can delete own payments" ON public.payments;
+-- Payments table is strictly READ-ONLY for users; only backend service role (webhooks/API) can record payments
 CREATE POLICY "Users can view own payments" ON public.payments FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users can insert own payments" ON public.payments FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can update own payments" ON public.payments FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users can delete own payments" ON public.payments FOR DELETE USING (auth.uid() = user_id);
+
+ALTER TABLE public.billing_cycles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can view own billing cycles" ON public.billing_cycles;
+CREATE POLICY "Users can view own billing cycles" ON public.billing_cycles FOR SELECT USING (auth.uid() = user_id);
 
 DROP POLICY IF EXISTS "Users access own usage" ON public.usage;
 DROP POLICY IF EXISTS "Users can access own usage" ON public.usage;

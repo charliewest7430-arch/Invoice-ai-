@@ -3,7 +3,6 @@ import { useApp } from '../context/AppContext';
 import { InvoiceTemplate } from '../components/invoice/InvoiceTemplate';
 import { downloadInvoicePdf } from '../lib/pdfGenerator';
 import { defaultEmailService } from '../services/emailService';
-import { openPaystackModal } from '../lib/paystack';
 import { ConfirmModal } from '../components/common/ConfirmModal';
 import { ReceiptViewModal } from '../components/receipts/ReceiptViewModal';
 import { SendReminderModal } from '../components/reminders/SendReminderModal';
@@ -134,30 +133,13 @@ export const InvoiceDetailPage: React.FC = () => {
     }
   };
 
-  const handlePaystackPay = () => {
+  const handleCardPayment = () => {
     if (invoice.status === 'paid') {
       showToast('This invoice has already been paid.', 'info');
       return;
     }
 
-    openPaystackModal({
-      email: invoice.client?.email || business.email || 'billing@client.com',
-      amount: invoice.total,
-      currency: invoice.currency,
-      reference: `INV-PAY-${invoice.number}-${Date.now()}`,
-      metadata: { invoiceId: invoice.id, invoiceNumber: invoice.number },
-      onSuccess: (res) => {
-        showToast(`Payment verified via Paystack! Ref: ${res.reference}`, 'success');
-        updateInvoiceStatus(invoice.id, 'paid');
-      },
-      onError: (err) => {
-        const msg = err.message || 'Payment processing failed.';
-        showToast(msg, 'error');
-      },
-      onClose: () => {
-        showToast('Payment window closed', 'info');
-      },
-    });
+    setIsMarkPaidModalOpen(true);
   };
 
   const handleMarkPaidConfirm = () => {
@@ -237,11 +219,11 @@ export const InvoiceDetailPage: React.FC = () => {
           ) : (
             <>
               <button
-                onClick={handlePaystackPay}
+                onClick={handleCardPayment}
                 className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm shadow-emerald-500/20 transition-all cursor-pointer"
               >
                 <CreditCard className="w-4 h-4" />
-                <span>Pay via Paystack</span>
+                <span>Record Payment</span>
               </button>
 
               <button

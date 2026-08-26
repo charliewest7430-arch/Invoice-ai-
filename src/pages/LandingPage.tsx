@@ -795,29 +795,37 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
             </div>
             <div className="space-y-4">
               <div className="space-y-1">
-                <h3 className="text-lg font-bold text-slate-900">Pro</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-900">Pro</h3>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    7-Day Free Trial
+                  </span>
+                </div>
                 <p className="text-xs text-slate-500">For active freelancers and growing businesses</p>
               </div>
               <div className="flex items-baseline gap-1">
                 <span className="text-3xl font-black text-slate-900">${PRO_MONTHLY}</span>
                 <span className="text-xs text-slate-500">/ month</span>
               </div>
+              <p className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg">
+                ✨ 7 days free trial, then ${PRO_MONTHLY}/month
+              </p>
               <ul className="space-y-2.5 text-xs text-slate-600 pt-2 border-t border-slate-100">
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" aria-hidden="true" />
-                  <span className="font-semibold text-slate-900">1,000 invoices per month</span>
+                  <span className="font-semibold text-slate-900">100 invoices per month</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" aria-hidden="true" />
-                  <span>1,000 clients directory</span>
+                  <span>100 clients in client directory</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" aria-hidden="true" />
-                  <span>200 AI invoice generations</span>
+                  <span>50 AI invoice generations / month</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" aria-hidden="true" />
-                  <span>100 recurring invoices</span>
+                  <span>50 recurring invoices</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" aria-hidden="true" />
@@ -838,44 +846,63 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigate }) => {
           </div>
 
           {/* Enterprise Plan */}
-          <div className="bg-white border border-slate-200 rounded-3xl p-7 shadow-2xs flex flex-col justify-between space-y-6">
+          <div className="bg-white border-2 border-purple-600 rounded-3xl p-7 shadow-lg flex flex-col justify-between space-y-6 relative">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-purple-600 text-white text-[11px] font-bold px-3 py-0.5 rounded-full uppercase tracking-wider">
+              Full Power
+            </div>
             <div className="space-y-4">
               <div className="space-y-1">
-                <h3 className="text-lg font-bold text-slate-900">Enterprise</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-slate-900">Enterprise</h3>
+                  <span className="text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full">
+                    7-Day Free Trial
+                  </span>
+                </div>
                 <p className="text-xs text-slate-500">For agencies and high-volume billing</p>
               </div>
               <div className="flex items-baseline gap-1">
                 <span className="text-3xl font-black text-slate-900">${ENTERPRISE_MONTHLY}</span>
                 <span className="text-xs text-slate-500">/ month</span>
               </div>
+              <p className="text-[11px] text-purple-700 font-semibold bg-purple-50 border border-purple-100 px-2.5 py-1 rounded-lg">
+                ✨ 7 days free trial, then ${ENTERPRISE_MONTHLY}/month
+              </p>
               <ul className="space-y-2.5 text-xs text-slate-600 pt-2 border-t border-slate-100">
                 <li className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
+                  <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" aria-hidden="true" />
                   <span className="font-semibold text-slate-900">Unlimited invoices</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
-                  <span>Unlimited clients & products</span>
+                  <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" aria-hidden="true" />
+                  <span className="font-semibold text-slate-900">Unlimited clients & products</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
-                  <span>Unlimited AI generations</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
+                  <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" aria-hidden="true" />
                   <span>Unlimited recurring invoices</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" aria-hidden="true" />
-                  <span>Full financial analytics & P&L</span>
+                  <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" aria-hidden="true" />
+                  <span>Unlimited AI invoice generations</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" aria-hidden="true" />
+                  <span>Custom business logo & branding</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" aria-hidden="true" />
+                  <span>Automated payment reminders</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" aria-hidden="true" />
+                  <span className="font-semibold text-purple-900">Full financial analysis & P&L</span>
                 </li>
               </ul>
             </div>
             <button
               onClick={() => setAuthModalMode('signup')}
-              className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+              className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow-md shadow-purple-500/20 transition-all cursor-pointer"
             >
-              Get Enterprise Access
+              Start 7-Day Free Trial
             </button>
           </div>
         </div>

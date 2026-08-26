@@ -115,7 +115,7 @@ export const FaqPage: React.FC<FaqPageProps> = ({
     {
       question: 'Does InvoiceFlow offer a free trial?',
       answer:
-        'Yes. InvoiceFlow provides a 7-day free trial on the Pro plan ($9.99/month) with full access to advanced features, 200 AI invoice generations, and unlimited client management. We also offer a Free plan with 5 invoices per month, 3 clients, and 5 AI invoice generations.',
+        'Yes. InvoiceFlow provides a 7-day free trial on both the Pro plan ($9.99/month) and Enterprise plan ($15.99/month) with full access to features like custom branding, automated payment reminders, and high quota capacities. We also offer a Starter Free plan with 5 invoices per month, 3 clients, and 5 AI invoice generations.',
       category: 'Pricing',
     },
     {

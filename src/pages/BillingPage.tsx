@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { openPaystackModal, getPaystackPublicKey } from '../lib/paystack';
+import { initiateFlutterwaveCheckout, verifyFlutterwaveTransaction } from '../lib/flutterwave';
 import { useAuth } from '../context/AuthContext';
 import { exportPaymentsToCsv } from '../lib/csvExport';
 import { PRO_MONTHLY, ENTERPRISE_MONTHLY, TRIAL_DAYS } from '../types';
+import {
+  isTrialActive as checkTrialActive,
+  getTrialDaysRemaining,
+  getEffectivePlan,
+  PLAN_CONFIGS,
+} from '../lib/planLimits';
 import { trackViewContent } from '../lib/tiktokPixel';
 import {
   CreditCard,
@@ -16,41 +22,45 @@ import {
   Sparkles,
   AlertTriangle,
   FileSpreadsheet,
+  Crown,
+  Check,
 } from 'lucide-react';
 
 export const BillingPage: React.FC = () => {
   const {
     subscription,
     usage,
+    clients,
+    recurringInvoices,
+    products,
     payments,
     business,
     upgradeSubscription,
+    startTrial,
+    cancelSubscription,
     showToast,
     openUpgradeModal,
   } = useApp();
   const { user, isDemoUser } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [activePlanAction, setActivePlanAction] = useState<'pro' | 'enterprise' | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
-  const [paystackError, setPaystackError] = useState<{
+  const [checkoutError, setCheckoutError] = useState<{
     message: string;
-    paystackResponse?: any;
+    details?: any;
   } | null>(null);
 
-  const publicKey = getPaystackPublicKey();
-  const isTestMode = publicKey.startsWith('pk_test_');
-
-  const isTrialActive =
-    subscription.status === 'trialing' &&
-    Boolean(subscription.trial_ends_at && new Date(subscription.trial_ends_at).getTime() > Date.now());
-
-  const trialDaysRemaining =
-    subscription.trial_ends_at && new Date(subscription.trial_ends_at).getTime() > Date.now()
-      ? Math.max(1, Math.ceil((new Date(subscription.trial_ends_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-      : 0;
+  const isTrial = checkTrialActive(subscription);
+  const trialDaysRemaining = getTrialDaysRemaining(subscription);
+  const effectivePlan = getEffectivePlan(subscription);
+  const trialAlreadyUsed = Boolean(subscription.trial_started_at || subscription.trial_used);
 
   const isTrialExpired =
     subscription.status === 'trial_expired' ||
-    (Boolean(subscription.trial_ends_at) && new Date(subscription.trial_ends_at!).getTime() <= Date.now() && subscription.plan === 'free');
+    (Boolean(subscription.trial_ends_at) &&
+      new Date(subscription.trial_ends_at!).getTime() <= Date.now() &&
+      subscription.status !== 'active');
 
   useEffect(() => {
     trackViewContent({
@@ -60,52 +70,130 @@ export const BillingPage: React.FC = () => {
       value: PRO_MONTHLY,
       currency: 'USD',
     });
+
+    // Check if user just returned from Flutterwave callback
+    const urlParams = new URLSearchParams(window.location.search);
+    const flwCallback = urlParams.get('flw_callback');
+    const txRef = urlParams.get('tx_ref') || urlParams.get('transaction_id');
+    const planParam = (urlParams.get('plan') || 'pro') as 'pro' | 'enterprise';
+    const modeParam = urlParams.get('mode') || (txRef && txRef.includes('-TRL') ? 'trial' : 'subscription');
+
+    if (flwCallback && txRef) {
+      console.log('🔄 Verifying Flutterwave callback on Billing Page return:', txRef, 'Mode:', modeParam);
+      setIsProcessing(true);
+      verifyFlutterwaveTransaction({
+        tx_ref: txRef,
+        plan: planParam,
+        mode: modeParam as 'trial' | 'subscription',
+      }).then(async (res) => {
+        setIsProcessing(false);
+        if (res.success) {
+          if (modeParam === 'trial') {
+            showToast(`🎉 Card authorized successfully! 7-Day ${planParam.toUpperCase()} trial is active.`, 'success');
+            await startTrial(planParam, txRef);
+          } else {
+            showToast(`🎉 Flutterwave payment verified successfully! Ref: ${txRef}`, 'success');
+            await upgradeSubscription(planParam, txRef, 'flutterwave');
+          }
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } else {
+          showToast(res.message || 'Payment verification could not be completed.', 'error');
+        }
+      });
+    }
   }, []);
 
-  const handleUpgrade = (planName: 'pro' | 'enterprise') => {
+  const handleStartTrial = async (plan: 'pro' | 'enterprise') => {
+    if (!user || isDemoUser) {
+      openUpgradeModal(plan);
+      return;
+    }
+
+    if (trialAlreadyUsed) {
+      showToast('A 7-day free trial has already been used on this account. Please select a plan to subscribe.', 'info');
+      return;
+    }
+
+    setIsProcessing(true);
+    setActivePlanAction(plan);
+    setCheckoutError(null);
+
+    // Require valid payment method authorization through Flutterwave before trial starts
+    await initiateFlutterwaveCheckout({
+      plan,
+      mode: 'trial',
+      email: user.email || business.email || 'billing@business.com',
+      name: business.name || user.email?.split('@')[0] || 'Subscriber',
+      businessId: business.id,
+      onSuccess: async (res) => {
+        showToast(`🎉 Card authorized! 7-day free trial of ${plan.toUpperCase()} activated.`, 'success');
+        await startTrial(plan, res.reference);
+        setIsProcessing(false);
+        setActivePlanAction(null);
+      },
+      onError: (err) => {
+        console.warn('⚠️ Flutterwave Trial Authorization Notice:', err?.message || err);
+        setCheckoutError({ message: err.message || 'Payment card authorization could not be started.' });
+        setIsProcessing(false);
+        setActivePlanAction(null);
+        showToast(err.message || 'Payment card authorization error', 'error');
+      },
+      onCancel: () => {
+        showToast('Card authorization window closed', 'info');
+        setIsProcessing(false);
+        setActivePlanAction(null);
+      },
+    });
+  };
+
+  const handleSubscribe = async (planName: 'pro' | 'enterprise') => {
     // If user is unauthenticated or in Demo Mode, prompt for account creation/signin
     if (!user || isDemoUser) {
       openUpgradeModal(planName);
       return;
     }
 
-    // Authenticated user: proceed directly with payment
-    const amount = planName === 'pro' ? PRO_MONTHLY : ENTERPRISE_MONTHLY;
     setIsProcessing(true);
-    setPaystackError(null);
+    setActivePlanAction(planName);
+    setCheckoutError(null);
 
-    const uniqueRef = `SUB-${planName.toUpperCase()}-USD-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-
-    openPaystackModal({
+    await initiateFlutterwaveCheckout({
+      plan: planName,
+      mode: 'subscription',
       email: user.email || business.email || 'billing@business.com',
-      amount,
-      currency: 'USD',
-      reference: uniqueRef,
-      planName,
-      metadata: { plan: planName, userId: user.id, businessId: business.id },
+      name: business.name || user.email?.split('@')[0] || 'Subscriber',
+      businessId: business.id,
       onSuccess: async (res) => {
-        showToast(`🎉 Subscription payment verified! Ref: ${res.reference}`, 'success');
-        await upgradeSubscription(planName, res.reference);
+        showToast(`🎉 Subscription payment verified via Flutterwave! Ref: ${res.reference}`, 'success');
+        await upgradeSubscription(planName, res.reference, 'flutterwave');
         setIsProcessing(false);
-        setPaystackError(null);
-        try {
-          sessionStorage.removeItem('invoiceflow_pending_upgrade');
-          localStorage.removeItem('invoiceflow_pending_upgrade');
-        } catch (e) {
-          console.warn('Storage notice:', e);
-        }
+        setActivePlanAction(null);
       },
       onError: (err) => {
-        console.warn('⚠️ Paystack Checkout Notice:', err?.message || err);
-        setPaystackError(err);
+        console.warn('⚠️ Flutterwave Checkout Notice:', err?.message || err);
+        setCheckoutError({ message: err.message || 'Payment checkout could not be started.' });
         setIsProcessing(false);
-        showToast(`Paystack error: ${err.message}`, 'error');
+        setActivePlanAction(null);
+        showToast(err.message || 'Payment checkout error', 'error');
       },
-      onClose: () => {
-        showToast('Paystack subscription window closed', 'info');
+      onCancel: () => {
+        showToast('Payment checkout window closed', 'info');
         setIsProcessing(false);
+        setActivePlanAction(null);
       },
     });
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!window.confirm('Are you sure you want to cancel your subscription / trial? You will not be billed automatically.')) {
+      return;
+    }
+    setIsCancelling(true);
+    try {
+      await cancelSubscription();
+    } finally {
+      setIsCancelling(false);
+    }
   };
 
   return (
@@ -114,32 +202,29 @@ export const BillingPage: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Billing & Subscriptions</h1>
-          <p className="text-xs text-slate-500">Manage plan tier, Paystack subscription status, and usage quotas</p>
+          <p className="text-xs text-slate-500">Manage plan tier, Flutterwave subscription status, and usage quotas</p>
         </div>
 
-        {/* Paystack Public Key Mode Badge */}
         <div className="flex items-center gap-2 self-start sm:self-auto bg-white border border-slate-200 px-3.5 py-1.5 rounded-xl text-xs shadow-2xs">
-          <div className={`w-2 h-2 rounded-full ${isTestMode ? 'bg-amber-500 animate-pulse' : publicKey.startsWith('pk_live_') ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+          <div className="w-2 h-2 rounded-full bg-emerald-500" />
           <span className="text-slate-600 font-mono text-[11px]">
-            Mode: <strong className={isTestMode ? 'text-amber-600' : 'text-emerald-600'}>
-              {isTestMode ? 'TEST MODE' : publicKey.startsWith('pk_live_') ? 'LIVE PRODUCTION' : 'DEV SIMULATION'}
-            </strong>
+            Provider: <strong className="text-emerald-700">FLUTTERWAVE SECURE</strong>
           </span>
         </div>
       </div>
 
-      {/* Paystack Checkout Error Alert */}
-      {paystackError && (
+      {/* Checkout Error Alert */}
+      {checkoutError && (
         <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 shadow-sm animate-shake flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <h3 className="text-sm font-bold text-rose-900">Checkout Error</h3>
-              <p className="text-xs text-rose-700 font-medium">{paystackError.message}</p>
+              <h3 className="text-sm font-bold text-rose-900">Checkout Notice</h3>
+              <p className="text-xs text-rose-700 font-medium">{checkoutError.message}</p>
             </div>
           </div>
           <button
-            onClick={() => setPaystackError(null)}
+            onClick={() => setCheckoutError(null)}
             className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 text-xs font-bold rounded-xl shrink-0 transition-colors"
           >
             Dismiss
@@ -148,7 +233,7 @@ export const BillingPage: React.FC = () => {
       )}
 
       {/* Trial Banner if user is on Free Trial or Expired */}
-      {isTrialActive && (
+      {isTrial && (
         <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-3xl p-5 shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm shadow-blue-500/20">
@@ -156,22 +241,25 @@ export const BillingPage: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-black text-slate-900">7-Day Free Trial Active</h3>
+                <h3 className="text-sm font-black text-slate-900">
+                  7-Day {subscription.plan.toUpperCase()} Free Trial Active
+                </h3>
                 <span className="px-2.5 py-0.5 bg-blue-600 text-white text-[10px] font-extrabold rounded-full uppercase tracking-wider">
                   {trialDaysRemaining} {trialDaysRemaining === 1 ? 'day' : 'days'} remaining
                 </span>
               </div>
               <p className="text-xs text-slate-600 mt-0.5">
-                Enjoy full access to Pro features. Upgrade anytime for just $9.99/month to keep uninterrupted access.
+                Enjoy full access to {subscription.plan === 'enterprise' ? 'Enterprise' : 'Pro'} features. Upgrade anytime to keep uninterrupted access.
               </p>
             </div>
           </div>
           <button
-            onClick={() => handleUpgrade('pro')}
+            onClick={() => handleSubscribe(subscription.plan === 'enterprise' ? 'enterprise' : 'pro')}
             disabled={isProcessing}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer flex items-center gap-2"
           >
-            Upgrade to Pro ($9.99/mo)
+            {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Crown className="w-3.5 h-3.5 text-amber-300" />}
+            <span>Subscribe to {subscription.plan.toUpperCase()} (${subscription.plan === 'enterprise' ? ENTERPRISE_MONTHLY : PRO_MONTHLY}/mo)</span>
           </button>
         </div>
       )}
@@ -190,17 +278,26 @@ export const BillingPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-amber-800 mt-0.5">
-                Your 7-day free trial has expired. Upgrade to Pro for $9.99/month to continue using unlimited invoices and AI generations.
+                Your 7-day free trial has expired. Subscribe to Pro or Enterprise to continue accessing advanced tools and higher quotas.
               </p>
             </div>
           </div>
-          <button
-            onClick={() => handleUpgrade('pro')}
-            disabled={isProcessing}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
-          >
-            Upgrade to Pro ($9.99/mo)
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleSubscribe('pro')}
+              disabled={isProcessing}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
+            >
+              Pro (${PRO_MONTHLY}/mo)
+            </button>
+            <button
+              onClick={() => handleSubscribe('enterprise')}
+              disabled={isProcessing}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
+            >
+              Enterprise (${ENTERPRISE_MONTHLY}/mo)
+            </button>
+          </div>
         </div>
       )}
 
@@ -213,75 +310,180 @@ export const BillingPage: React.FC = () => {
             </span>
             <div className="flex items-center gap-3">
               <h2 className="text-3xl font-black text-slate-900 capitalize">
-                {isTrialActive ? 'Pro (7-Day Trial)' : `${subscription.plan} Plan`}
+                {isTrial ? `${subscription.plan.toUpperCase()} (7-Day Trial)` : `${subscription.plan} Plan`}
               </h2>
               <span className={`px-3 py-1 text-xs font-bold rounded-full border ${
-                isTrialActive
+                isTrial
                   ? 'bg-blue-50 text-blue-700 border-blue-200'
-                  : subscription.plan !== 'free'
+                  : subscription.status === 'active'
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                   : 'bg-slate-100 text-slate-700 border-slate-200'
               }`}>
-                {isTrialActive ? `${trialDaysRemaining} DAYS TRIAL REMAINING` : subscription.status.toUpperCase()}
+                {isTrial ? `${trialDaysRemaining} DAYS TRIAL REMAINING` : subscription.status.toUpperCase()}
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              {isTrialActive
-                ? `Trial period ends: ${new Date(subscription.trial_ends_at!).toLocaleDateString()}`
-                : `Next renewal billing date: ${subscription.next_billing_date || 'N/A'}`}
+              {isTrial
+                ? `7-day trial ends on ${new Date(subscription.trial_ends_at!).toLocaleDateString()}. Automatic billing starts thereafter.`
+                : subscription.next_billing_date
+                ? `Next automatic billing date: ${new Date(subscription.next_billing_date).toLocaleDateString()}`
+                : subscription.current_period_end
+                ? `Current billing period ends: ${new Date(subscription.current_period_end).toLocaleDateString()}`
+                : 'Free tier without recurring charge'}
             </p>
+            {subscription.card_last4 && (
+              <div className="flex items-center gap-2 mt-2 text-xs text-slate-600 bg-slate-50 border border-slate-200/80 px-3 py-1.5 rounded-xl w-fit">
+                <CreditCard className="w-3.5 h-3.5 text-blue-600" />
+                <span>Authorized Card: <strong>{subscription.card_brand || 'Card'} •••• {subscription.card_last4}</strong></span>
+              </div>
+            )}
           </div>
 
-          {subscription.plan === 'free' && (
-            <button
-              onClick={() => handleUpgrade('pro')}
-              disabled={isProcessing}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm shadow-blue-500/20 transition-all flex items-center gap-2 hover:scale-[1.01] disabled:opacity-50 cursor-pointer"
-            >
-              {isProcessing ? (
-                <Loader2 className="w-4 h-4 animate-spin text-white" />
-              ) : (
-                <Zap className="w-4 h-4 text-amber-300" />
-              )}
-              <span>Upgrade to Pro (${PRO_MONTHLY}/mo)</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {effectivePlan === 'free' ? (
+              <>
+                {!trialAlreadyUsed && (
+                  <button
+                    onClick={() => handleStartTrial('pro')}
+                    disabled={isProcessing}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Start Pro Trial</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => handleSubscribe('pro')}
+                  disabled={isProcessing}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm shadow-blue-500/20 transition-all flex items-center gap-2 hover:scale-[1.01] disabled:opacity-50 cursor-pointer"
+                >
+                  {isProcessing ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  ) : (
+                    <Zap className="w-4 h-4 text-amber-300" />
+                  )}
+                  <span>Upgrade to Pro (${PRO_MONTHLY}/mo)</span>
+                </button>
+              </>
+            ) : (
+              (isTrial || subscription.status === 'active') && (
+                <button
+                  onClick={handleCancelSubscription}
+                  disabled={isCancelling}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-200 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isCancelling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  <span>Cancel {isTrial ? 'Trial' : 'Subscription'}</span>
+                </button>
+              )
+            )}
+          </div>
         </div>
 
-        {/* Quota Progress */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
-          <div className="space-y-2">
+        {/* Quota Progress Overview */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4 border-t border-slate-100">
+          <div className="space-y-2 p-3.5 bg-slate-50/70 border border-slate-200/60 rounded-2xl">
             <div className="flex justify-between text-xs text-slate-600 font-bold">
               <span>Monthly Invoices</span>
-              <span className="text-slate-900">
-                {usage.invoice_count_month} / {subscription.plan === 'free' && !isTrialActive ? 5 : 'Unlimited'}
+              <span className="text-slate-900 font-mono">
+                {effectivePlan === 'enterprise'
+                  ? 'Unlimited'
+                  : effectivePlan === 'pro'
+                  ? `${usage.invoice_count_month} / 100`
+                  : `${usage.invoice_count_month} / 5`}
               </span>
             </div>
-            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+            <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden">
               <div
                 className="bg-blue-600 h-full rounded-full transition-all"
                 style={{
-                  width: `${subscription.plan === 'free' && !isTrialActive ? Math.min((usage.invoice_count_month / 5) * 100, 100) : 15}%`,
+                  width: `${
+                    effectivePlan === 'enterprise'
+                      ? 20
+                      : effectivePlan === 'pro'
+                      ? Math.min((usage.invoice_count_month / 100) * 100, 100)
+                      : Math.min((usage.invoice_count_month / 5) * 100, 100)
+                  }%`,
                 }}
               />
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2 p-3.5 bg-slate-50/70 border border-slate-200/60 rounded-2xl">
             <div className="flex justify-between text-xs text-slate-600 font-bold">
-              <span>Gemini AI Generations</span>
-              <span className="text-slate-900">
-                {usage.ai_generations_month} / {subscription.plan === 'free' && !isTrialActive ? 5 : 200}
+              <span>AI Invoice Generations</span>
+              <span className="text-slate-900 font-mono">
+                {effectivePlan === 'enterprise'
+                  ? 'Unlimited'
+                  : effectivePlan === 'pro'
+                  ? `${usage.ai_generations_month} / 50`
+                  : `${usage.ai_generations_month} / 5`}
               </span>
             </div>
-            <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+            <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden">
               <div
                 className="bg-purple-600 h-full rounded-full transition-all"
                 style={{
                   width: `${
-                    subscription.plan === 'free' && !isTrialActive
-                      ? Math.min((usage.ai_generations_month / 5) * 100, 100)
-                      : Math.min((usage.ai_generations_month / 200) * 100, 100)
+                    effectivePlan === 'enterprise'
+                      ? 20
+                      : effectivePlan === 'pro'
+                      ? Math.min((usage.ai_generations_month / 50) * 100, 100)
+                      : Math.min((usage.ai_generations_month / 5) * 100, 100)
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2 p-3.5 bg-slate-50/70 border border-slate-200/60 rounded-2xl">
+            <div className="flex justify-between text-xs text-slate-600 font-bold">
+              <span>Clients Directory</span>
+              <span className="text-slate-900 font-mono">
+                {effectivePlan === 'enterprise'
+                  ? 'Unlimited'
+                  : effectivePlan === 'pro'
+                  ? `${clients.length} / 100`
+                  : `${clients.length} / 3`}
+              </span>
+            </div>
+            <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-emerald-600 h-full rounded-full transition-all"
+                style={{
+                  width: `${
+                    effectivePlan === 'enterprise'
+                      ? 20
+                      : effectivePlan === 'pro'
+                      ? Math.min((clients.length / 100) * 100, 100)
+                      : Math.min((clients.length / 3) * 100, 100)
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2 p-3.5 bg-slate-50/70 border border-slate-200/60 rounded-2xl">
+            <div className="flex justify-between text-xs text-slate-600 font-bold">
+              <span>Recurring Invoices</span>
+              <span className="text-slate-900 font-mono">
+                {effectivePlan === 'enterprise'
+                  ? 'Unlimited'
+                  : effectivePlan === 'pro'
+                  ? `${recurringInvoices.length} / 50`
+                  : `${recurringInvoices.length} / 1`}
+              </span>
+            </div>
+            <div className="w-full bg-slate-200/80 h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-amber-600 h-full rounded-full transition-all"
+                style={{
+                  width: `${
+                    effectivePlan === 'enterprise'
+                      ? 20
+                      : effectivePlan === 'pro'
+                      ? Math.min((recurringInvoices.length / 50) * 100, 100)
+                      : Math.min((recurringInvoices.length / 1) * 100, 100)
                   }%`,
                 }}
               />
@@ -295,7 +497,7 @@ export const BillingPage: React.FC = () => {
         {/* Free Plan */}
         <div
           className={`p-6 bg-white border rounded-3xl space-y-4 flex flex-col justify-between shadow-2xs ${
-            subscription.plan === 'free' ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200/80'
+            effectivePlan === 'free' ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200/80'
           }`}
         >
           <div className="space-y-3">
@@ -312,28 +514,32 @@ export const BillingPage: React.FC = () => {
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>5 Gemini AI prompt runs</span>
+                <span>5 AI prompt invoice generations</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Standard PDF downloads</span>
               </li>
             </ul>
           </div>
 
           <button
-            disabled={subscription.plan === 'free'}
+            disabled
             className="w-full py-2.5 bg-slate-100 text-slate-500 rounded-xl text-xs font-bold disabled:opacity-80"
           >
-            {subscription.plan === 'free' ? 'Current Active Plan' : 'Downgrade'}
+            {effectivePlan === 'free' ? 'Current Active Plan' : 'Free Tier'}
           </button>
         </div>
 
         {/* Pro Plan */}
         <div
           className={`p-6 bg-white border rounded-3xl space-y-4 flex flex-col justify-between relative shadow-2xs ${
-            subscription.plan === 'pro' ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-slate-200/80'
+            effectivePlan === 'pro' ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-slate-200/80'
           }`}
         >
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="font-extrabold text-blue-600 text-base">Pro</h3>
+              <h3 className="font-extrabold text-blue-600 text-base">PRO</h3>
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] font-extrabold uppercase bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">
                   7-Day Free Trial
@@ -352,89 +558,158 @@ export const BillingPage: React.FC = () => {
             <ul className="space-y-2.5 text-xs text-slate-600 pt-3 border-t border-slate-100">
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>Unlimited Invoices & Clients</span>
+                <span className="font-semibold text-slate-900">100 invoices per month</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>200 Gemini AI Generations</span>
+                <span>100 clients in client directory</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>Verified Paystack Payments</span>
+                <span>50 AI invoice generations / month</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
-                <span>Custom PDF Templates & Branding</span>
+                <span>50 recurring invoices</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Custom business logo & branding</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Automated payment reminders</span>
               </li>
             </ul>
           </div>
 
-          <button
-            onClick={() => handleUpgrade('pro')}
-            disabled={subscription.plan === 'pro' || isProcessing}
-            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm shadow-blue-500/20 disabled:opacity-60 transition-all flex items-center justify-center gap-2 cursor-pointer"
-          >
-            {isProcessing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : subscription.plan === 'pro' ? (
-              'Current Active Plan'
-            ) : (
-              `Upgrade to Pro ($${PRO_MONTHLY}/month)`
+          <div className="space-y-2 pt-2">
+            {!trialAlreadyUsed && effectivePlan === 'free' && (
+              <button
+                onClick={() => handleStartTrial('pro')}
+                disabled={isProcessing}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {isProcessing && activePlanAction === 'pro' ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Start 7-Day Free Trial</span>
+                  </>
+                )}
+              </button>
             )}
-          </button>
+
+            <button
+              onClick={() => handleSubscribe('pro')}
+              disabled={(effectivePlan === 'pro' && !isTrial) || isProcessing}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm shadow-blue-500/20 disabled:opacity-60 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isProcessing && activePlanAction === 'pro' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : effectivePlan === 'pro' && !isTrial ? (
+                'Current Active Plan'
+              ) : (
+                `Subscribe Pro ($${PRO_MONTHLY}/mo)`
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Enterprise Plan */}
         <div
-          className={`p-6 bg-white border rounded-3xl space-y-4 flex flex-col justify-between shadow-2xs ${
-            subscription.plan === 'enterprise' ? 'border-purple-500 ring-2 ring-purple-500/30' : 'border-slate-200/80'
+          className={`p-6 bg-white border-2 rounded-3xl space-y-4 flex flex-col justify-between relative shadow-md ${
+            effectivePlan === 'enterprise' ? 'border-purple-600 ring-2 ring-purple-600/30' : 'border-purple-200'
           }`}
         >
           <div className="space-y-3">
-            <h3 className="font-extrabold text-purple-700 text-base">Enterprise</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-purple-700 text-base">ENTERPRISE</h3>
+              <span className="text-[10px] font-extrabold uppercase bg-purple-50 text-purple-700 px-2.5 py-0.5 rounded-full border border-purple-200">
+                Full Power
+              </span>
+            </div>
             <p className="text-3xl font-black text-slate-900">
               ${ENTERPRISE_MONTHLY} <span className="text-xs text-slate-400 font-normal">/month</span>
+            </p>
+            <p className="text-[11px] text-purple-700 font-semibold bg-purple-50 border border-purple-100 px-2.5 py-1 rounded-lg">
+              ✨ 7 days free trial, then ${ENTERPRISE_MONTHLY}/month
             </p>
             <ul className="space-y-2.5 text-xs text-slate-600 pt-3 border-t border-slate-100">
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>Unlimited Invoices, Clients & Products</span>
+                <span className="font-semibold text-slate-900">Unlimited invoices</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>Unlimited Gemini AI Generations</span>
+                <span className="font-semibold text-slate-900">Unlimited clients & products</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>Dedicated Priority Support</span>
+                <span>Unlimited recurring invoices</span>
               </li>
               <li className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>Custom API & Webhooks</span>
+                <span>Unlimited AI invoice generations</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
+                <span>Custom business logo & branding</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
+                <span>Automated payment reminders</span>
+              </li>
+              <li className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-purple-600 shrink-0" />
+                <span className="font-semibold text-purple-900">Full financial analysis & P&L</span>
               </li>
             </ul>
           </div>
 
-          <button
-            onClick={() => handleUpgrade('enterprise')}
-            disabled={subscription.plan === 'enterprise' || isProcessing}
-            className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-sm shadow-purple-500/20 disabled:opacity-60 transition-all flex items-center justify-center gap-2 cursor-pointer"
-          >
-            {isProcessing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : subscription.plan === 'enterprise' ? (
-              'Current Active Plan'
-            ) : (
-              `Upgrade to Enterprise ($${ENTERPRISE_MONTHLY}/month)`
+          <div className="space-y-2 pt-2">
+            {!trialAlreadyUsed && effectivePlan === 'free' && (
+              <button
+                onClick={() => handleStartTrial('enterprise')}
+                disabled={isProcessing}
+                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {isProcessing && activePlanAction === 'enterprise' ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Start 7-Day Free Trial</span>
+                  </>
+                )}
+              </button>
             )}
-          </button>
+
+            <button
+              onClick={() => handleSubscribe('enterprise')}
+              disabled={(effectivePlan === 'enterprise' && !isTrial) || isProcessing}
+              className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold shadow-sm shadow-purple-500/20 disabled:opacity-60 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isProcessing && activePlanAction === 'enterprise' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : effectivePlan === 'enterprise' && !isTrial ? (
+                'Current Active Plan'
+              ) : (
+                `Subscribe Enterprise ($${ENTERPRISE_MONTHLY}/mo)`
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Payment History Log */}
       <div className="bg-white border border-slate-200/80 rounded-3xl p-6 space-y-4 shadow-2xs">
         <div className="flex items-center justify-between">
-          <h3 className="font-extrabold text-slate-900 text-sm">Paystack Payment Records</h3>
+          <div>
+            <h3 className="font-extrabold text-slate-900 text-sm">Payment & Subscription Records</h3>
+            <p className="text-xs text-slate-400">Verified transaction history</p>
+          </div>
           {payments.length > 0 && (
             <button
               onClick={() => {
@@ -455,6 +730,7 @@ export const BillingPage: React.FC = () => {
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider font-bold">
                   <th className="py-3 px-4">Reference</th>
+                  <th className="py-3 px-4">Provider</th>
                   <th className="py-3 px-4">Amount</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Date</th>
@@ -463,7 +739,8 @@ export const BillingPage: React.FC = () => {
               <tbody className="divide-y divide-slate-100">
                 {payments.map((p) => (
                   <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3.5 px-4 font-mono text-slate-800 font-semibold">{p.reference}</td>
+                    <td className="py-3.5 px-4 font-mono text-slate-800 font-semibold">{p.reference || p.flutterwave_ref || p.paystack_reference}</td>
+                    <td className="py-3.5 px-4 font-semibold text-slate-600 capitalize">{p.payment_provider || 'card'}</td>
                     <td className="py-3.5 px-4 font-black text-slate-900">
                       {p.currency} {p.amount.toLocaleString()}
                     </td>
@@ -479,7 +756,7 @@ export const BillingPage: React.FC = () => {
             </table>
           </div>
         ) : (
-          <p className="text-xs text-slate-400 py-4 text-center font-medium">No Paystack payment records yet.</p>
+          <p className="text-xs text-slate-400 py-4 text-center font-medium">No payment records yet.</p>
         )}
       </div>
     </div>

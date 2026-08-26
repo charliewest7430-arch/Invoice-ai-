@@ -11,11 +11,33 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { BarChart3, TrendingUp, DollarSign, Clock, CheckCircle2, Award, Zap, Wallet, TrendingDown, ArrowUpRight } from 'lucide-react';
+import {
+  BarChart3,
+  TrendingUp,
+  DollarSign,
+  Clock,
+  CheckCircle2,
+  Award,
+  Zap,
+  Wallet,
+  TrendingDown,
+  ArrowUpRight,
+  Lock,
+  Crown,
+  Sparkles,
+  ShieldCheck,
+} from 'lucide-react';
 import { formatCurrencyAmount } from '../lib/exchangeRates';
+import { canUseFeature, getEffectivePlan, isTrialActive } from '../lib/planLimits';
 
 export const AnalyticsPage: React.FC = () => {
-  const { invoices, clients, expenses, business, setActivePage } = useApp();
+  const { invoices, clients, expenses, business, subscription, setActivePage, openUpgradeModal, startTrial, showToast } = useApp();
+
+  const isFinancialAnalysisAllowed = canUseFeature(subscription, 'financial_analysis');
+  const isPnLAllowed = canUseFeature(subscription, 'profit_and_loss');
+  const effectivePlan = getEffectivePlan(subscription);
+  const trialActive = isTrialActive(subscription);
+  const trialUsed = Boolean(subscription.trial_started_at || subscription.trial_used);
 
   const totalBilled = invoices.reduce((sum, i) => sum + (i.total || 0), 0);
   const totalPaid = invoices
@@ -62,12 +84,90 @@ export const AnalyticsPage: React.FC = () => {
     };
   });
 
+  // If user is on Pro or Free without Enterprise access, show locked gate with upgrade option
+  if (!isFinancialAnalysisAllowed || !isPnLAllowed) {
+    return (
+      <div className="space-y-6 animate-fade-in text-slate-800 max-w-4xl mx-auto py-6">
+        <div className="bg-white border border-slate-200/80 rounded-3xl p-8 sm:p-12 shadow-sm text-center space-y-6 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600" />
+          
+          <div className="w-16 h-16 rounded-3xl bg-purple-50 text-purple-600 border border-purple-200 flex items-center justify-center mx-auto shadow-xs">
+            <Crown className="w-8 h-8" />
+          </div>
+
+          <div className="space-y-2 max-w-lg mx-auto">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-purple-50 border border-purple-200 rounded-full text-purple-700 text-xs font-bold uppercase tracking-wider mb-2">
+              <Lock className="w-3.5 h-3.5" /> Enterprise Feature
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+              Full Financial Analysis & P&L
+            </h1>
+            <p className="text-slate-600 text-sm leading-relaxed">
+              Real-time Profit & Loss reports, monthly cashflow metrics, collection rate indicators, and client revenue distribution are available exclusively on the <strong className="text-purple-700">Enterprise Plan</strong>.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto text-left pt-2">
+            <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-1">
+              <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Net Profit & Loss
+              </div>
+              <p className="text-[11px] text-slate-500">Live reconciliation of collected revenue against overhead expenses.</p>
+            </div>
+            <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-1">
+              <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Cashflow Trends
+              </div>
+              <p className="text-[11px] text-slate-500">Annual month-by-month billed vs paid vs spent bar comparisons.</p>
+            </div>
+            <div className="p-4 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-1">
+              <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Client Breakdown
+              </div>
+              <p className="text-[11px] text-slate-500">Detailed revenue generated per client account to spot top retainers.</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
+            {!trialUsed && effectivePlan === 'free' && (
+              <button
+                onClick={async () => {
+                  const ok = await startTrial('enterprise');
+                  if (ok) {
+                    showToast('🎉 Enterprise 7-day trial activated! P&L and Financial Analysis unlocked.', 'success');
+                  }
+                }}
+                className="w-full sm:w-auto px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Start Enterprise 7-Day Free Trial</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setActivePage('billing')}
+              className="w-full sm:w-auto px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-xl shadow-sm shadow-purple-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Crown className="w-4 h-4 text-amber-300" />
+              <span>Upgrade to Enterprise ($15.99/mo)</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in text-slate-800">
       {/* Title */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Financial Reports & P&L</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Financial Reports & P&L</h1>
+            <span className="px-2.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-extrabold rounded-full uppercase tracking-wider">
+              Enterprise Unlocked
+            </span>
+          </div>
           <p className="text-xs text-slate-500">Revenue, expenses, profit/loss, and portfolio analytics</p>
         </div>
 

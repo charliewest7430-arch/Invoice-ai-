@@ -35,6 +35,7 @@ import {
 } from '../lib/planLimits';
 import { defaultEmailService } from '../services/emailService';
 import { trackStartTrial, trackPurchase } from '../lib/tiktokPixel';
+import { cancelSubscriptionApi } from '../lib/flutterwave';
 
 export type NavigationPage =
   | 'dashboard'
@@ -1843,7 +1844,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           status: 'active',
           flutterwave_ref: txRef,
           payment_provider: provider,
+          current_period_start: newSub.current_period_start || new Date().toISOString(),
           current_period_end: newSub.current_period_end,
+          next_billing_date: newSub.current_period_end,
+          cancelled_at: null,
           updated_at: new Date().toISOString(),
         });
 
@@ -1855,6 +1859,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           currency: 'USD',
           status: 'success',
           channel: 'card',
+          notes: 'Monthly subscription payment',
           paid_at: newPayment.paid_at,
         }]);
       } catch (e) {
@@ -1865,7 +1870,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const startTrial = async (targetPlan: 'pro' | 'enterprise' = 'pro'): Promise<boolean> => {
+  const startTrial = async (targetPlan: 'pro' | 'enterprise' = 'pro', authRef?: string): Promise<boolean> => {
     if (subscription.trial_started_at || subscription.trial_used) {
       showToast('A 7-day free trial has already been used on this account. Please select a plan to continue.', 'info');
       return false;
@@ -1880,6 +1885,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       trial_started_at: trialStart,
       trial_ends_at: trialEnd,
       trial_used: true,
+      current_period_start: trialStart,
+      current_period_end: trialEnd,
+      next_billing_date: trialEnd,
+      flutterwave_ref: authRef || subscription.flutterwave_ref,
+      payment_provider: 'flutterwave',
+      cancelled_at: undefined,
       updated_at: new Date().toISOString(),
     };
     setSubscription(updatedSub);
@@ -1893,6 +1904,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           trial_started_at: trialStart,
           trial_ends_at: trialEnd,
           trial_used: true,
+          current_period_start: trialStart,
+          current_period_end: trialEnd,
+          next_billing_date: trialEnd,
+          flutterwave_ref: authRef,
+          payment_provider: 'flutterwave',
+          cancelled_at: null,
           updated_at: new Date().toISOString(),
         });
       } catch (e) {
@@ -1912,18 +1929,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const cancelSubscription = async () => {
+    const cancelledAt = new Date().toISOString();
     const updated: Subscription = {
       ...subscription,
       status: 'canceled',
-      plan: 'free',
-      updated_at: new Date().toISOString(),
+      cancelled_at: cancelledAt,
+      next_billing_date: undefined,
+      updated_at: cancelledAt,
     };
     setSubscription(updated);
-    showToast('Subscription canceled. You have been downgraded to Free Plan.', 'info');
+
+    try {
+      if (user?.id) {
+        await cancelSubscriptionApi();
+      }
+    } catch (apiErr) {
+      console.warn('Cancel subscription API error:', apiErr);
+    }
+
+    showToast('Subscription / trial cancelled. No further automatic charges will occur.', 'info');
 
     if (isSupabaseConfigured && supabase && user && !isDemoUser) {
       try {
-        await supabase.from('subscriptions').update({ status: 'canceled', plan: 'free' }).eq('user_id', user.id);
+        await supabase.from('subscriptions').update({
+          status: 'canceled',
+          cancelled_at: cancelledAt,
+          next_billing_date: null,
+          updated_at: cancelledAt,
+        }).eq('user_id', user.id);
       } catch (e) {
         console.warn('Cancel subscription notice:', e);
       }
