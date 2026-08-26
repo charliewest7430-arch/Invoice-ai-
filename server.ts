@@ -429,246 +429,434 @@ Help the user draft invoices, analyze revenue trends, write polite payment remin
 });
 
 /**
- * Paystack Endpoint: Transaction Initialization
+ * Flutterwave Pricing Constants
  */
-app.post('/api/paystack/initialize', async (req, res) => {
+const FLW_PRO_PRICE = 9.99;
+const FLW_ENTERPRISE_PRICE = 15.99;
+
+/**
+ * Flutterwave Endpoint: Transaction Initialization
+ */
+app.post('/api/flutterwave/initialize', async (req, res) => {
   try {
-    // Security check: Verify that user is authenticated before creating a subscription/payment transaction
+    // Security check: Verify that user is authenticated before creating a subscription transaction
     const authCheck = await verifyServerAuth(req);
     if (!authCheck.authenticated) {
-      console.warn(`🚨 [Paystack Init Server] Blocked unauthenticated checkout request: ${authCheck.error}`);
+      console.warn(`🚨 [Flutterwave Init Server] Blocked unauthenticated checkout request: ${authCheck.error}`);
       return res.status(401).json({
         success: false,
         message: authCheck.error || 'Authentication required. Please sign in or create an account to upgrade.',
       });
     }
 
-    const { email, amount, currency = 'USD', reference, metadata, callbackUrl } = req.body;
-    const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
+    const userId = authCheck.user?.id || req.body?.metadata?.userId || 'usr_session';
+    const rawPlan = (req.body.plan || 'pro').toLowerCase();
+    const plan: 'pro' | 'enterprise' = rawPlan === 'enterprise' ? 'enterprise' : 'pro';
+
+    // Server-enforced pricing: NEVER trust frontend amount
+    const price = plan === 'enterprise' ? FLW_ENTERPRISE_PRICE : FLW_PRO_PRICE;
+    const planTitle = plan === 'enterprise' ? 'Enterprise' : 'Pro';
+
+    const { email, name, callbackUrl, metadata = {} } = req.body;
+    const flwSecretKey = process.env.FLW_SECRET_KEY;
 
     // Sanitize Email
     const sanitizeEmail = (e: string) => {
       const trimmed = (e || '').trim().toLowerCase();
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      return emailRegex.test(trimmed) ? trimmed : 'billing@business.com';
+      return emailRegex.test(trimmed) ? trimmed : (authCheck.user?.email || 'billing@business.com');
     };
     const validEmail = sanitizeEmail(email);
+    const customerName = (name || authCheck.user?.user_metadata?.full_name || 'InvoiceFlow Subscriber').trim();
 
-    // Sanitize Reference (alphanumeric, hyphens, underscores, max 100 chars)
-    const rawRef = reference || `PAY-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const uniqueReference = rawRef.replace(/[^a-zA-Z0-9_-]/g, '').substring(0, 100);
+    // Generate unique transaction reference
+    const uniqueTxRef = `FLW-INVF-${userId.slice(0, 8)}-${plan.toUpperCase()}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
 
-    // Ensure amount is positive number in major units (USD $) and convert to minor unit (cents: USD x 100)
-    // $9.99 = 999 cents, $15.99 = 1599 cents
-    const rawAmountNum = Math.max(1, Number(amount) || 9.99);
-    const amountInMinor = Math.round(rawAmountNum * 100);
-    const requestedCurrency = (currency || 'USD').toUpperCase();
+    console.log(`💳 [Flutterwave Init Server] User: ${userId}, Plan: ${planTitle}, Amount: $${price} USD, Ref: ${uniqueTxRef}`);
 
-    console.log(`💳 [Paystack Init Server] Email: ${validEmail}, USD Amount: $${rawAmountNum}, Cents: ${amountInMinor}, Currency: ${requestedCurrency}, Ref: ${uniqueReference}`);
+    // If real Flutterwave secret key is configured, initialize with Flutterwave v3 API
+    if (flwSecretKey && flwSecretKey !== 'FLWSECK_TEST-xxx' && !flwSecretKey.includes('xxx')) {
+      const baseUrl = process.env.APP_URL || (req.headers.origin as string) || 'https://www.invoiceflowai.cloud';
+      const redirectUrl = callbackUrl && typeof callbackUrl === 'string' && callbackUrl.startsWith('http')
+        ? callbackUrl
+        : `${baseUrl}/billing?flw_callback=1&plan=${plan}`;
 
-    // If real secret key exists (e.g., sk_test_... or sk_live_...), initialize with Paystack API
-    if (paystackSecret && paystackSecret !== 'sk_test_xxx' && paystackSecret.startsWith('sk_')) {
-      const cleanPayload: Record<string, any> = {
-        email: validEmail,
-        amount: amountInMinor,
-        currency: requestedCurrency,
-        reference: uniqueReference,
-        metadata: metadata && typeof metadata === 'object' ? metadata : {},
+      const payload = {
+        tx_ref: uniqueTxRef,
+        amount: price,
+        currency: 'USD',
+        redirect_url: redirectUrl,
+        customer: {
+          email: validEmail,
+          name: customerName,
+        },
+        customizations: {
+          title: `InvoiceFlow ${planTitle} Plan`,
+          description: `InvoiceFlow ${planTitle} Monthly Subscription ($${price}/month)`,
+          logo: `${baseUrl}/favicon.ico`,
+        },
+        meta: {
+          user_id: userId,
+          plan,
+          price,
+          ...metadata,
+        },
       };
 
-      if (callbackUrl && typeof callbackUrl === 'string' && callbackUrl.startsWith('http')) {
-        cleanPayload.callback_url = callbackUrl;
-      }
+      console.log(`💳 [Flutterwave API Payments Request]:`, JSON.stringify(payload, null, 2));
 
-      console.log(`💳 [Paystack API Init Request]:`, JSON.stringify(cleanPayload, null, 2));
-
-      const paystackRes = await fetch('https://api.paystack.co/transaction/initialize', {
+      const flwRes = await fetch('https://api.flutterwave.com/v3/payments', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${paystackSecret}`,
+          Authorization: `Bearer ${flwSecretKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(cleanPayload),
+        body: JSON.stringify(payload),
       });
 
-      const responseData = await paystackRes.json();
-      console.log(`💳 [Paystack API Init Response - Status ${paystackRes.status}]:`, JSON.stringify(responseData, null, 2));
+      const responseData = await flwRes.json();
+      console.log(`💳 [Flutterwave API Payments Response - Status ${flwRes.status}]:`, JSON.stringify(responseData, null, 2));
 
-      if (paystackRes.ok && responseData.status === true) {
+      if (flwRes.ok && (responseData.status === 'success' || responseData.data?.link)) {
         return res.json({
           success: true,
-          reference: responseData.data?.reference || uniqueReference,
-          access_code: responseData.data?.access_code,
-          authorization_url: responseData.data?.authorization_url,
-          currency: requestedCurrency,
-          paystackResponse: responseData,
+          link: responseData.data?.link,
+          tx_ref: uniqueTxRef,
+          plan,
+          amount: price,
+          currency: 'USD',
+          flutterwaveResponse: responseData,
         });
       } else {
-        // Check if error is unsupported currency or merchant USD validation error
-        const rawMsg = (responseData?.message || '').toLowerCase();
-        const isUnsupportedCurrency =
-          requestedCurrency === 'USD' ||
-          responseData?.code === 'unsupported_currency' ||
-          responseData?.type === 'validation_error' ||
-          rawMsg.includes('currency') ||
-          rawMsg.includes('usd') ||
-          rawMsg.includes('merchant');
-
-        if (isUnsupportedCurrency) {
-          console.warn('⚠️ Paystack USD not enabled on this merchant key. Attempting automatic fallback to NGN (Paystack default supported currency)...');
-          try {
-            // Convert USD amount to approximate NGN amount (e.g., $29 ~ 45,000 NGN in kobo)
-            const usdToNgnRate = 1600;
-            const ngnAmountInKobo = Math.round(rawAmountNum * usdToNgnRate * 100);
-            const ngnPayload = {
-              ...cleanPayload,
-              amount: ngnAmountInKobo,
-              currency: 'NGN',
-            };
-
-            const ngnRes = await fetch('https://api.paystack.co/transaction/initialize', {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${paystackSecret}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(ngnPayload),
-            });
-
-            const ngnData = await ngnRes.json();
-            if (ngnRes.ok && ngnData.status === true) {
-              console.log('✅ Paystack NGN fallback initialization successful');
-              return res.json({
-                success: true,
-                reference: ngnData.data?.reference || uniqueReference,
-                access_code: ngnData.data?.access_code,
-                authorization_url: ngnData.data?.authorization_url,
-                currency: 'NGN',
-                convertedFromUSD: true,
-                paystackResponse: ngnData,
-              });
-            }
-          } catch (fallbackErr) {
-            console.error('NGN fallback error:', fallbackErr);
-          }
-        }
-
-        const errorMessage = isUnsupportedCurrency
-          ? 'USD payments are currently not enabled for this Paystack account. Please enable international currency in your Paystack dashboard.'
-          : (responseData?.message || 'Paystack transaction initialization failed.');
-
-        console.warn('⚠️ Paystack Initialization API Response:', responseData?.message || 'Initialization declined by Paystack');
+        const errorMsg = responseData?.message || 'Flutterwave checkout initialization failed.';
+        console.warn('⚠️ Flutterwave Initialization Error:', errorMsg);
         return res.status(400).json({
           success: false,
-          code: isUnsupportedCurrency ? 'unsupported_currency' : (responseData?.code || 'init_failed'),
-          message: errorMessage,
-          paystackResponse: {
-            status: false,
-            message: errorMessage,
-          },
+          message: errorMsg,
+          flutterwaveResponse: responseData,
         });
       }
     }
 
-    // Development fallback simulation mode
-    console.log('ℹ️ Paystack running in Dev Simulation Mode (No real secret key configured)');
+    // Development Simulation Mode (when FLW_SECRET_KEY is not configured)
+    console.log('ℹ️ Flutterwave running in Dev Simulation Mode (No live FLW_SECRET_KEY configured)');
     return res.json({
       success: true,
       devMode: true,
-      reference: uniqueReference,
-      access_code: `DEV_ACCESS_${Date.now()}`,
-      authorization_url: '#',
+      link: null,
+      tx_ref: uniqueTxRef,
+      plan,
+      amount: price,
+      currency: 'USD',
       message: 'Dev Mode simulation initialized successfully',
-      paystackResponse: {
-        status: true,
-        message: 'Dev Simulation Initialized',
-        data: {
-          authorization_url: '#',
-          access_code: `DEV_ACCESS_${Date.now()}`,
-          reference: uniqueReference,
-        },
-      },
     });
   } catch (error: any) {
-    console.error('❌ Paystack Init Server Exception:', error);
+    console.error('❌ Flutterwave Init Server Exception:', error);
     return res.status(500).json({
       success: false,
-      message: error.message || 'Server exception during Paystack initialization',
-      paystackResponse: { status: false, error: error.message },
+      message: error.message || 'Server exception during Flutterwave initialization',
     });
   }
 });
 
 /**
- * Paystack Endpoint: Payment Verification
+ * Flutterwave Endpoint: Transaction Verification
  */
-app.post('/api/paystack/verify', async (req, res) => {
+app.post('/api/flutterwave/verify', async (req, res) => {
   try {
-    const { reference, simulated, amount, email } = req.body;
-    const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
+    const authCheck = await verifyServerAuth(req);
+    const { transaction_id, tx_ref, plan = 'pro', simulated } = req.body;
+    const flwSecretKey = process.env.FLW_SECRET_KEY;
+    const userId = authCheck.user?.id || req.body?.userId;
 
-    if (!reference) {
-      return res.status(400).json({ status: 'failed', message: 'Reference is required for verification' });
-    }
+    console.log(`🔍 [Flutterwave Verify Server] Verifying Transaction. ID: ${transaction_id}, Ref: ${tx_ref}, Plan: ${plan}`);
 
-    console.log(`🔍 [Paystack Verify Server] Verifying Ref: ${reference}`);
+    // If real FLW_SECRET_KEY is configured and not explicitly simulated
+    if (flwSecretKey && flwSecretKey !== 'FLWSECK_TEST-xxx' && !flwSecretKey.includes('xxx') && !simulated) {
+      let verifyUrl = '';
+      if (transaction_id) {
+        verifyUrl = `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transaction_id)}/verify`;
+      } else if (tx_ref) {
+        verifyUrl = `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(tx_ref)}`;
+      } else {
+        return res.status(400).json({
+          status: 'failed',
+          message: 'Either transaction_id or tx_ref is required for payment verification.',
+        });
+      }
 
-    // Real Paystack Verification if secret key exists and not explicitly simulated
-    if (paystackSecret && paystackSecret !== 'sk_test_xxx' && paystackSecret.startsWith('sk_') && !simulated) {
-      const paystackRes = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+      const flwRes = await fetch(verifyUrl, {
+        method: 'GET',
         headers: {
-          Authorization: `Bearer ${paystackSecret}`,
+          Authorization: `Bearer ${flwSecretKey}`,
           'Content-Type': 'application/json',
         },
       });
 
-      const data = await paystackRes.json();
-      console.log(`🔍 [Paystack API Verify Response - Status ${paystackRes.status}]:`, JSON.stringify(data, null, 2));
+      const responseData = await flwRes.json();
+      console.log(`🔍 [Flutterwave Verify Response - Status ${flwRes.status}]:`, JSON.stringify(responseData, null, 2));
 
-      if (data.status && data.data?.status === 'success') {
+      if (flwRes.ok && responseData.status === 'success' && responseData.data?.status === 'successful') {
+        const txData = responseData.data;
+        const verifiedPlan = (txData.meta?.plan || plan || 'pro').toLowerCase();
+        const expectedPrice = verifiedPlan === 'enterprise' ? FLW_ENTERPRISE_PRICE : FLW_PRO_PRICE;
+
+        // Verify currency and amount
+        if (txData.currency === 'USD' && Number(txData.amount) < expectedPrice) {
+          console.warn(`🚨 [Flutterwave Verify] Amount mismatch. Expected $${expectedPrice}, got $${txData.amount}`);
+          return res.status(400).json({
+            status: 'failed',
+            message: `Payment amount ($${txData.amount}) does not match required plan price ($${expectedPrice}).`,
+          });
+        }
+
+        // Update database if Supabase is connected
+        if (serverSupabase && userId) {
+          try {
+            await serverSupabase.from('subscriptions').upsert({
+              user_id: userId,
+              plan: verifiedPlan,
+              status: 'active',
+              flutterwave_ref: txData.tx_ref,
+              flutterwave_transaction_id: String(txData.id),
+              payment_provider: 'flutterwave',
+              current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+
+            await serverSupabase.from('payments').insert([{
+              user_id: userId,
+              amount: txData.amount,
+              currency: txData.currency || 'USD',
+              status: 'success',
+              channel: txData.payment_type || 'card',
+              flutterwave_ref: txData.tx_ref,
+              flutterwave_transaction_id: String(txData.id),
+              payment_provider: 'flutterwave',
+              paid_at: txData.created_at || new Date().toISOString(),
+            }]);
+          } catch (dbErr) {
+            console.warn('⚠️ Error updating database records on verification:', dbErr);
+          }
+        }
+
         return res.json({
           status: 'success',
-          message: 'Payment verified successfully via Paystack API',
-          data: data.data,
+          message: 'Payment verified successfully via Flutterwave API',
+          data: txData,
         });
       } else {
         return res.status(400).json({
           status: 'failed',
-          message: data.message || 'Paystack payment verification failed',
-          data: data.data,
+          message: responseData.message || 'Flutterwave payment verification failed or payment was unsuccessful.',
+          data: responseData.data,
         });
       }
     }
 
-    // Graceful verified fallback response for test/development mode
+    // Dev Simulation Verified Response
+    const verifiedPlan = plan === 'enterprise' ? 'enterprise' : 'pro';
+    const price = verifiedPlan === 'enterprise' ? FLW_ENTERPRISE_PRICE : FLW_PRO_PRICE;
+    const mockRef = tx_ref || `FLW-DEV-${Date.now()}`;
+
+    if (serverSupabase && userId) {
+      try {
+        await serverSupabase.from('subscriptions').upsert({
+          user_id: userId,
+          plan: verifiedPlan,
+          status: 'active',
+          flutterwave_ref: mockRef,
+          payment_provider: 'flutterwave',
+          current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        await serverSupabase.from('payments').insert([{
+          user_id: userId,
+          amount: price,
+          currency: 'USD',
+          status: 'success',
+          channel: 'card',
+          flutterwave_ref: mockRef,
+          payment_provider: 'flutterwave',
+          paid_at: new Date().toISOString(),
+        }]);
+      } catch (dbErr) {
+        console.warn('⚠️ Dev mode database record notice:', dbErr);
+      }
+    }
+
     return res.json({
       status: 'success',
       message: 'Payment verified successfully (Development Simulation)',
       data: {
-        reference: reference || `REF-${Date.now()}`,
-        status: 'success',
-        amount: Math.round((amount || 9.99) * 100),
-        currency: 'NGN',
-        customer: { email: email || 'user@example.com' },
-        paid_at: new Date().toISOString(),
-        channel: 'card',
+        id: `FLW_TX_${Date.now()}`,
+        tx_ref: mockRef,
+        flw_ref: `FLW-REF-${Date.now()}`,
+        status: 'successful',
+        amount: price,
+        currency: 'USD',
+        payment_type: 'card',
+        created_at: new Date().toISOString(),
+        meta: { plan: verifiedPlan, user_id: userId },
       },
     });
   } catch (error: any) {
-    console.error('❌ Paystack Verify Error:', error);
-    return res.status(500).json({ status: 'failed', message: error.message });
+    console.error('❌ Flutterwave Verify Server Error:', error);
+    return res.status(500).json({ status: 'failed', message: error.message || 'Server error during verification' });
   }
 });
 
 /**
- * Paystack Webhook endpoint
+ * Flutterwave Webhook Endpoint
  */
-app.post('/api/paystack/webhook', (req, res) => {
-  const event = req.body;
-  console.log('🔔 [Paystack Webhook Received]:', event.event);
-  
-  // Respond 200 OK immediately to Paystack
-  res.status(200).send('Webhook received');
+app.post('/api/flutterwave/webhook', async (req, res) => {
+  try {
+    const secretHash = process.env.FLW_SECRET_HASH;
+    const signature = req.headers['verif-hash'];
+
+    // Verify secret hash if configured
+    if (secretHash && signature !== secretHash) {
+      console.warn('🚨 [Flutterwave Webhook] Invalid secret hash signature received');
+      return res.status(401).send('Invalid signature');
+    }
+
+    const payload = req.body;
+    console.log('🔔 [Flutterwave Webhook Event]:', payload?.event, payload?.data?.tx_ref);
+
+    // Process charge.completed event
+    if (payload?.event === 'charge.completed' && payload?.data?.status === 'successful') {
+      const txData = payload.data;
+      const userId = txData.meta?.user_id;
+      const plan = txData.meta?.plan || 'pro';
+
+      if (serverSupabase && userId) {
+        try {
+          await serverSupabase.from('subscriptions').upsert({
+            user_id: userId,
+            plan: plan === 'enterprise' ? 'enterprise' : 'pro',
+            status: 'active',
+            flutterwave_ref: txData.tx_ref,
+            flutterwave_transaction_id: String(txData.id),
+            payment_provider: 'flutterwave',
+            current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+
+          await serverSupabase.from('payments').insert([{
+            user_id: userId,
+            amount: txData.amount,
+            currency: txData.currency || 'USD',
+            status: 'success',
+            channel: txData.payment_type || 'card',
+            flutterwave_ref: txData.tx_ref,
+            flutterwave_transaction_id: String(txData.id),
+            payment_provider: 'flutterwave',
+            paid_at: txData.created_at || new Date().toISOString(),
+          }]);
+        } catch (dbErr) {
+          console.warn('⚠️ Webhook database sync notice:', dbErr);
+        }
+      }
+    }
+
+    // Always return 200 OK immediately to acknowledge webhook receipt
+    return res.status(200).send('Webhook received');
+  } catch (err: any) {
+    console.error('❌ Flutterwave Webhook Error:', err);
+    return res.status(200).send('Webhook processed with error');
+  }
+});
+
+/**
+ * 7-Day Free Trial Endpoint
+ * Allows users to start a 7-day free trial on Pro or Enterprise without repeating trials
+ */
+app.post('/api/subscription/start-trial', async (req, res) => {
+  try {
+    const authCheck = await verifyServerAuth(req);
+    if (!authCheck.authenticated) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required. Please sign in or create an account to start your 7-day free trial.',
+      });
+    }
+
+    const userId = authCheck.user?.id;
+    const rawPlan = (req.body.plan || 'pro').toLowerCase();
+    const targetPlan: 'pro' | 'enterprise' = rawPlan === 'enterprise' ? 'enterprise' : 'pro';
+
+    if (serverSupabase && userId) {
+      // Check existing subscription to prevent repeated trials
+      const { data: existingSub } = await serverSupabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (existingSub) {
+        if (existingSub.trial_started_at || existingSub.trial_used) {
+          return res.status(400).json({
+            success: false,
+            message: 'A 7-day free trial has already been used on this account. Please select a plan to continue.',
+          });
+        }
+      }
+
+      const trialStart = new Date().toISOString();
+      const trialEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data: updatedSub, error: updateErr } = await serverSupabase
+        .from('subscriptions')
+        .upsert({
+          user_id: userId,
+          plan: targetPlan,
+          status: 'trialing',
+          trial_started_at: trialStart,
+          trial_ends_at: trialEnd,
+          trial_used: true,
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .maybeSingle();
+
+      if (updateErr) {
+        console.warn('Trial update database error:', updateErr);
+      }
+
+      return res.json({
+        success: true,
+        message: `Your 7-day ${targetPlan.toUpperCase()} trial has been activated!`,
+        subscription: updatedSub || {
+          user_id: userId,
+          plan: targetPlan,
+          status: 'trialing',
+          trial_started_at: trialStart,
+          trial_ends_at: trialEnd,
+          trial_used: true,
+        },
+      });
+    }
+
+    // Dev fallback
+    const trialStart = new Date().toISOString();
+    const trialEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    return res.json({
+      success: true,
+      message: `Your 7-day ${targetPlan.toUpperCase()} trial has been activated!`,
+      subscription: {
+        user_id: userId || 'usr_dev',
+        plan: targetPlan,
+        status: 'trialing',
+        trial_started_at: trialStart,
+        trial_ends_at: trialEnd,
+        trial_used: true,
+      },
+    });
+  } catch (error: any) {
+    console.error('❌ Start Trial Server Error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Server error starting trial' });
+  }
 });
 
 /**

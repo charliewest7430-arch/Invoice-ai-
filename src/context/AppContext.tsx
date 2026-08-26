@@ -21,6 +21,18 @@ import {
   ENTERPRISE_MONTHLY,
   TRIAL_DAYS,
 } from '../types';
+import {
+  canCreateInvoice,
+  canCreateClient,
+  canGenerateAiInvoice,
+  canCreateRecurringInvoice,
+  canCreateProduct,
+  canCreateExpense,
+  canUseFeature,
+  isTrialActive,
+  getEffectivePlan,
+  getTrialDaysRemaining,
+} from '../lib/planLimits';
 import { defaultEmailService } from '../services/emailService';
 import { trackStartTrial, trackPurchase } from '../lib/tiktokPixel';
 
@@ -113,9 +125,9 @@ interface AppContextType {
   closeSendReminderModal: () => void;
 
   subscription: Subscription;
-  upgradeSubscription: (plan: PlanType, paystackRef: string) => Promise<boolean>;
+  upgradeSubscription: (plan: PlanType, reference?: string, provider?: 'flutterwave' | 'paystack') => Promise<boolean>;
   cancelSubscription: () => Promise<void>;
-  startTrial: () => Promise<boolean>;
+  startTrial: (plan?: 'pro' | 'enterprise') => Promise<boolean>;
   payments: Payment[];
   usage: Usage;
   incrementAiUsage: () => Promise<boolean>;
@@ -1262,6 +1274,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return null;
     }
 
+    // Quota Limit Enforcement
+    const quotaCheck = canCreateClient(subscription, clients.length);
+    if (!quotaCheck.allowed) {
+      openUpgradeModal(subscription.plan === 'free' ? 'pro' : 'enterprise');
+      showToast(quotaCheck.message || 'Client limit reached for your current plan.', 'error');
+      return null;
+    }
+
     if (isSupabaseConfigured && supabase && user && !isDemoUser) {
       try {
         const isValidUuid = (id?: string) => Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
@@ -1407,6 +1427,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const createInvoice = async (
     invoiceData: Omit<Invoice, 'id' | 'user_id' | 'created_at'>
   ): Promise<{ success: boolean; invoice?: Invoice; error?: string }> => {
+    // Quota Limit Enforcement
+    const quotaCheck = canCreateInvoice(subscription, usage.invoice_count_month);
+    if (!quotaCheck.allowed) {
+      openUpgradeModal(subscription.plan === 'free' ? 'pro' : 'enterprise');
+      showToast(quotaCheck.message || 'Monthly invoice limit reached.', 'error');
+      return { success: false, error: quotaCheck.message || 'Invoice limit reached' };
+    }
     if (isSupabaseConfigured && supabase && user && !isDemoUser) {
       try {
         const { items, client, ...invFields } = invoiceData;
@@ -1732,11 +1759,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const incrementAiUsage = async (): Promise<boolean> => {
-    const currentPlan = subscription.plan;
-    const limit = PLAN_LIMITS[currentPlan].maxAiGenerations;
-
-    if (usage.ai_generations_month >= limit) {
-      showToast(`You have reached your ${currentPlan.toUpperCase()} plan limit of ${limit} AI generations/month. Upgrade to Pro!`, 'error');
+    const quotaCheck = canGenerateAiInvoice(subscription, usage.ai_generations_month);
+    if (!quotaCheck.allowed) {
+      openUpgradeModal(subscription.plan === 'free' ? 'pro' : 'enterprise');
+      showToast(quotaCheck.message || 'Monthly AI generation limit reached.', 'error');
       return false;
     }
 
@@ -1754,14 +1780,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const upgradeSubscription = async (plan: PlanType, paystackRef: string): Promise<boolean> => {
+  const upgradeSubscription = async (
+    plan: PlanType,
+    reference?: string,
+    provider: 'flutterwave' | 'paystack' = 'flutterwave'
+  ): Promise<boolean> => {
+    const txRef = reference || `FLW-SUB-${Date.now()}`;
+    const price = plan === 'enterprise' ? ENTERPRISE_MONTHLY : PRO_MONTHLY;
+
     const newSub: Subscription = {
       id: `sub_${Date.now()}`,
       user_id: user?.id || 'usr_demo_882910',
       plan,
       status: 'active',
-      paystack_customer_code: `CUST_${paystackRef.slice(-6)}`,
-      paystack_subscription_code: `SUB_${paystackRef.slice(-6)}`,
+      flutterwave_ref: txRef,
+      payment_provider: provider,
       current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1772,8 +1805,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newPayment: Payment = {
       id: `pay_${Date.now()}`,
       user_id: user?.id || 'usr_demo_882910',
-      paystack_reference: paystackRef,
-      amount: plan === 'pro' ? PRO_MONTHLY : ENTERPRISE_MONTHLY,
+      reference: txRef,
+      flutterwave_ref: txRef,
+      payment_provider: provider,
+      amount: price,
       currency: 'USD',
       status: 'success',
       channel: 'card',
@@ -1783,15 +1818,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setPayments((prev) => [newPayment, ...prev]);
 
-    logActivity('subscription_upgraded', `Upgraded subscription to ${plan.toUpperCase()} Plan (Ref: ${paystackRef})`);
-    showToast(`🎉 Subscription successfully upgraded to ${plan.toUpperCase()} Plan! Pro features unlocked.`, 'success');
+    logActivity('subscription_upgraded', `Upgraded subscription to ${plan.toUpperCase()} Plan via ${provider === 'flutterwave' ? 'Flutterwave' : 'Paystack'} (Ref: ${txRef})`);
+    showToast(`🎉 Subscription successfully upgraded to ${plan.toUpperCase()} Plan! Features unlocked.`, 'success');
 
-    // Track TikTok Purchase event with verified payment amount and currency (deduplicated by paystackRef)
+    // Track TikTok Purchase event with verified payment amount and currency
     try {
       trackPurchase({
         value: newPayment.amount,
         currency: newPayment.currency || 'USD',
-        order_id: paystackRef,
+        order_id: txRef,
         content_id: plan,
         content_name: `InvoiceFlow ${plan.toUpperCase()} Subscription`,
         content_type: 'product',
@@ -1806,14 +1841,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           user_id: user.id,
           plan,
           status: 'active',
-          paystack_customer_code: newSub.paystack_customer_code,
-          paystack_subscription_code: newSub.paystack_subscription_code,
+          flutterwave_ref: txRef,
+          payment_provider: provider,
           current_period_end: newSub.current_period_end,
+          updated_at: new Date().toISOString(),
         });
 
         await supabase.from('payments').insert([{
           user_id: user.id,
-          paystack_reference: paystackRef,
+          flutterwave_ref: txRef,
+          payment_provider: provider,
           amount: newPayment.amount,
           currency: 'USD',
           status: 'success',
@@ -1828,18 +1865,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const startTrial = async (): Promise<boolean> => {
-    if (subscription.trial_started_at) {
-      showToast('A 7-day free trial has already been used on this account.', 'info');
+  const startTrial = async (targetPlan: 'pro' | 'enterprise' = 'pro'): Promise<boolean> => {
+    if (subscription.trial_started_at || subscription.trial_used) {
+      showToast('A 7-day free trial has already been used on this account. Please select a plan to continue.', 'info');
       return false;
     }
+
     const trialStart = new Date().toISOString();
     const trialEnd = new Date(Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const updatedSub: Subscription = {
       ...subscription,
+      plan: targetPlan,
       status: 'trialing',
       trial_started_at: trialStart,
       trial_ends_at: trialEnd,
+      trial_used: true,
       updated_at: new Date().toISOString(),
     };
     setSubscription(updatedSub);
@@ -1848,10 +1888,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         await supabase.from('subscriptions').upsert({
           user_id: user.id,
-          plan: subscription.plan,
+          plan: targetPlan,
           status: 'trialing',
           trial_started_at: trialStart,
           trial_ends_at: trialEnd,
+          trial_used: true,
+          updated_at: new Date().toISOString(),
         });
       } catch (e) {
         console.warn('Start trial notice:', e);
@@ -1860,12 +1902,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Track TikTok StartTrial event
     try {
-      trackStartTrial({ plan: 'pro_trial', userId: user?.id, value: 0, currency: 'USD' });
+      trackStartTrial({ plan: `${targetPlan}_trial`, userId: user?.id, value: 0, currency: 'USD' });
     } catch (ttErr) {
       console.warn('[AppContext] TikTok StartTrial notice:', ttErr);
     }
 
-    showToast('🎉 Your 7-day free trial is now active! All Pro features unlocked.', 'success');
+    showToast(`🎉 Your 7-day free trial of ${targetPlan.toUpperCase()} is active! All features unlocked.`, 'success');
     return true;
   };
 
@@ -1985,11 +2027,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Products CRUD
   const addProduct = async (prodData: Omit<Product, 'id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<Product | null> => {
-    const currentPlan = subscription.plan;
-    const maxProds = PLAN_LIMITS[currentPlan].maxProducts;
-    if (products.length >= maxProds) {
-      openUpgradeModal('pro');
-      showToast(`You have reached the ${currentPlan.toUpperCase()} plan limit of ${maxProds} products/services. Upgrade to Pro!`, 'error');
+    const quotaCheck = canCreateProduct(subscription, products.length);
+    if (!quotaCheck.allowed) {
+      openUpgradeModal('enterprise');
+      showToast(quotaCheck.message || 'Product catalog limit reached.', 'error');
       return null;
     }
 
@@ -2054,11 +2095,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Expenses CRUD
   const addExpense = async (expData: Omit<Expense, 'id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<Expense | null> => {
-    const currentPlan = subscription.plan;
-    const maxExpenses = PLAN_LIMITS[currentPlan].maxExpenses;
-    if (expenses.length >= maxExpenses) {
-      openUpgradeModal('pro');
-      showToast(`You have reached the ${currentPlan.toUpperCase()} plan limit of ${maxExpenses} expenses. Upgrade to Pro!`, 'error');
+    const quotaCheck = canCreateExpense(subscription, expenses.length);
+    if (!quotaCheck.allowed) {
+      openUpgradeModal('enterprise');
+      showToast(quotaCheck.message || 'Expense limit reached.', 'error');
       return null;
     }
 
@@ -2123,17 +2163,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Recurring Invoices CRUD
   const addRecurringInvoice = async (recData: Omit<RecurringInvoice, 'id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<RecurringInvoice | null> => {
-    const currentPlan = subscription.plan;
-    if (!PLAN_LIMITS[currentPlan].canUseRecurringInvoices) {
-      openUpgradeModal('pro');
-      showToast('Recurring invoices are available exclusively on Pro & Enterprise plans. Please upgrade!', 'error');
-      return null;
-    }
-
-    const maxRec = PLAN_LIMITS[currentPlan].maxRecurringInvoices;
-    if (recurringInvoices.length >= maxRec) {
-      openUpgradeModal('enterprise');
-      showToast(`You have reached the ${currentPlan.toUpperCase()} plan limit of ${maxRec} recurring invoice profiles. Upgrade!`, 'error');
+    const quotaCheck = canCreateRecurringInvoice(subscription, recurringInvoices.length);
+    if (!quotaCheck.allowed) {
+      openUpgradeModal(subscription.plan === 'free' ? 'pro' : 'enterprise');
+      showToast(quotaCheck.message || 'Recurring invoices limit reached.', 'error');
       return null;
     }
 

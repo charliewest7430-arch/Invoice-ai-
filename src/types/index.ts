@@ -268,12 +268,16 @@ export interface Subscription {
   user_id: string;
   plan: PlanType;
   status: 'active' | 'past_due' | 'canceled' | 'trialing' | 'trial_expired';
+  flutterwave_ref?: string;
+  flutterwave_transaction_id?: string;
+  payment_provider?: 'flutterwave' | 'paystack' | string;
   paystack_customer_code?: string;
   paystack_subscription_code?: string;
   paystack_email_token?: string;
   current_period_end?: string;
   trial_started_at?: string;
   trial_ends_at?: string;
+  trial_used?: boolean;
   next_billing_date?: string;
   created_at: string;
   updated_at?: string;
@@ -284,7 +288,11 @@ export interface Payment {
   user_id: string;
   invoice_id?: string;
   invoice_number?: string;
-  paystack_reference: string;
+  reference?: string;
+  flutterwave_ref?: string;
+  flutterwave_transaction_id?: string;
+  paystack_reference?: string;
+  payment_provider?: 'flutterwave' | 'paystack' | string;
   amount: number;
   currency: string;
   status: 'success' | 'failed' | 'pending';
@@ -357,7 +365,11 @@ export interface PlanLimits {
   maxProducts: number;
   maxExpenses: number;
   maxRecurringInvoices: number;
+  canUseRecurringInvoices: boolean;
   allowCustomLogo: boolean;
+  allowAutomatedReminders: boolean;
+  allowFinancialAnalysis: boolean;
+  allowProfitAndLoss: boolean;
   allowPdfDownload: boolean;
 }
 
@@ -369,27 +381,39 @@ export const PLAN_LIMITS: Record<PlanType, PlanLimits> = {
     maxProducts: 5,
     maxExpenses: 15,
     maxRecurringInvoices: 1,
+    canUseRecurringInvoices: false,
     allowCustomLogo: false,
+    allowAutomatedReminders: false,
+    allowFinancialAnalysis: false,
+    allowProfitAndLoss: false,
     allowPdfDownload: true,
   },
   pro: {
-    maxInvoicesPerMonth: 1000,
-    maxClients: 1000,
-    maxAiGenerations: 200,
+    maxInvoicesPerMonth: 100,
+    maxClients: 100,
+    maxAiGenerations: 50,
     maxProducts: 1000,
     maxExpenses: 5000,
-    maxRecurringInvoices: 100,
+    maxRecurringInvoices: 50,
+    canUseRecurringInvoices: true,
     allowCustomLogo: true,
+    allowAutomatedReminders: true,
+    allowFinancialAnalysis: false,
+    allowProfitAndLoss: false,
     allowPdfDownload: true,
   },
   enterprise: {
-    maxInvoicesPerMonth: 999999,
-    maxClients: 999999,
-    maxAiGenerations: 999999,
-    maxProducts: 999999,
-    maxExpenses: 999999,
-    maxRecurringInvoices: 999999,
+    maxInvoicesPerMonth: 999999, // Unlimited
+    maxClients: 999999, // Unlimited
+    maxAiGenerations: 999999, // Unlimited
+    maxProducts: 999999, // Unlimited
+    maxExpenses: 999999, // Unlimited
+    maxRecurringInvoices: 999999, // Unlimited
+    canUseRecurringInvoices: true,
     allowCustomLogo: true,
+    allowAutomatedReminders: true,
+    allowFinancialAnalysis: true,
+    allowProfitAndLoss: true,
     allowPdfDownload: true,
   },
 };
