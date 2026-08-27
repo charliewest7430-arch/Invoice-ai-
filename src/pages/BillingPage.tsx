@@ -204,13 +204,6 @@ export const BillingPage: React.FC = () => {
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Billing & Subscriptions</h1>
           <p className="text-xs text-slate-500">Manage plan tier, Flutterwave subscription status, and usage quotas</p>
         </div>
-
-        <div className="flex items-center gap-2 self-start sm:self-auto bg-white border border-slate-200 px-3.5 py-1.5 rounded-xl text-xs shadow-2xs">
-          <div className="w-2 h-2 rounded-full bg-emerald-500" />
-          <span className="text-slate-600 font-mono text-[11px]">
-            Provider: <strong className="text-emerald-700">FLUTTERWAVE SECURE</strong>
-          </span>
-        </div>
       </div>
 
       {/* Checkout Error Alert */}
