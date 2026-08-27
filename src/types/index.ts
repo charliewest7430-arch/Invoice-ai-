@@ -121,7 +121,7 @@ export interface Invoice {
   items: InvoiceItem[];
 }
 
-export type PaymentMethodType = 'Paystack' | 'Bank Transfer' | 'Cash' | 'Card' | 'Other';
+export type PaymentMethodType = 'Flutterwave' | 'Card' | 'Bank Transfer' | 'Cash' | 'Other';
 
 export interface Receipt {
   id: string;

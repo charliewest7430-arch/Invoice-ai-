@@ -553,7 +553,7 @@ export const BillingPage: React.FC = () => {
               ${PRO_MONTHLY} <span className="text-xs text-slate-400 font-normal">/month</span>
             </p>
             <p className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-lg">
-              ✨ 7 days free trial, then ${PRO_MONTHLY}/month
+              ✨ 7 days free trial with $1 card auth, then ${PRO_MONTHLY}/month
             </p>
             <ul className="space-y-2.5 text-xs text-slate-600 pt-3 border-t border-slate-100">
               <li className="flex items-center gap-2">
@@ -634,7 +634,7 @@ export const BillingPage: React.FC = () => {
               ${ENTERPRISE_MONTHLY} <span className="text-xs text-slate-400 font-normal">/month</span>
             </p>
             <p className="text-[11px] text-purple-700 font-semibold bg-purple-50 border border-purple-100 px-2.5 py-1 rounded-lg">
-              ✨ 7 days free trial, then ${ENTERPRISE_MONTHLY}/month
+              ✨ 7 days free trial with $1 card auth, then ${ENTERPRISE_MONTHLY}/month
             </p>
             <ul className="space-y-2.5 text-xs text-slate-600 pt-3 border-t border-slate-100">
               <li className="flex items-center gap-2">

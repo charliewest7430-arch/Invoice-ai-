@@ -67,10 +67,16 @@ export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOp
       }),
     });
 
-    const initData: FlutterwaveInitResponse = await res.json();
+    const text = await res.text();
+    let initData: any = null;
+    try {
+      initData = text ? JSON.parse(text) : {};
+    } catch {
+      initData = { success: false, message: text || `Server responded with status ${res.status}` };
+    }
 
     if (!res.ok || !initData.success) {
-      const errorMsg = initData.message || 'Failed to initialize Flutterwave checkout session.';
+      const errorMsg = initData.message || (res.status === 401 ? 'Please sign in or create an account to start your upgrade.' : 'Failed to initialize Flutterwave checkout session.');
       console.warn('⚠️ Flutterwave initialization declined:', errorMsg);
       if (options.onError) {
         options.onError({ message: errorMsg, data: initData });
@@ -152,7 +158,14 @@ export async function verifyFlutterwaveTransaction(params: {
       body: JSON.stringify(params),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { message: text || `Server responded with status ${res.status}` };
+    }
+
     if (res.ok && (data.status === 'success' || data.success === true)) {
       return { success: true, data: data.data || data };
     }
@@ -186,7 +199,14 @@ export async function cancelSubscriptionApi(): Promise<{ success: boolean; messa
       body: JSON.stringify({}),
     });
 
-    const data = await res.json();
+    const text = await res.text();
+    let data: any = null;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { message: text || `Server responded with status ${res.status}` };
+    }
+
     if (res.ok && (data.status === 'success' || data.success === true)) {
       return { success: true, data: data.data || data };
     }

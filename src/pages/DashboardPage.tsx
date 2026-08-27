@@ -709,7 +709,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               className="w-full py-2.5 px-3 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
             >
               <ShieldCheck className="w-4 h-4 text-blue-600" />
-              <span>Subscription & Paystack Billing</span>
+              <span>Subscription & Billing</span>
             </button>
           </div>
         </div>
