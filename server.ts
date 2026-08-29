@@ -10,10 +10,23 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+function sanitizeSupabaseUrl(rawUrl?: string): string | undefined {
+  if (!rawUrl) return undefined;
+  let url = rawUrl.trim().replace(/^["']|["']$/g, '');
+  if (!url) return undefined;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    url = `https://${url}`;
+  }
+  url = url.replace(/\/(rest|auth|storage|graphql)(\/v[0-9]+)?(\/.*)?$/i, '');
+  url = url.replace(/\/+$/, '');
+  return url;
+}
+
 // Initialize Server-Side Supabase Client (prefers service role key for webhook/admin operations, falls back to anon key)
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+const rawSupabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const supabaseUrl = sanitizeSupabaseUrl(rawSupabaseUrl);
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.trim().replace(/^["']|["']$/g, '') : undefined;
+const supabaseAnonKey = (process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY) ? (process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY)!.trim().replace(/^["']|["']$/g, '') : undefined;
 const isSupabaseConfigured = Boolean(
   supabaseUrl &&
   (supabaseServiceKey || supabaseAnonKey) &&

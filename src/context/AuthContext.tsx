@@ -469,6 +469,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (errMsg.includes('email not confirmed')) {
           return { success: false, error: 'Please verify your email address before signing in.' };
         }
+        if (errMsg.includes('invalid path') || errMsg.includes('path specified')) {
+          return {
+            success: false,
+            error: 'Invalid Supabase URL format in your environment. Ensure VITE_SUPABASE_URL is set to "https://<project-ref>.supabase.co" (without "/rest/v1" or trailing paths).',
+          };
+        }
         return { success: false, error: error.message || 'Incorrect email or password. Please try again.' };
       }
 
