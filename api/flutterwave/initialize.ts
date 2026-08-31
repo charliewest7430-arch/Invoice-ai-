@@ -83,7 +83,17 @@ export default async function handler(req: any, res: any) {
 
     const prefix = isTrial ? 'IFLOW-TRL' : 'IFLOW-SUB';
     const tx_ref = `${prefix}-${selectedPlan.toUpperCase()}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
-    const flwSecretKey = process.env.FLW_SECRET_KEY;
+    const flwSecretKey = process.env.FLUTTERWAVE_SECRET_KEY;
+
+    // Strict validation: Require Flutterwave secret key
+    if (!flwSecretKey || !flwSecretKey.trim()) {
+      console.error('❌ [Flutterwave Initialize Serverless] FLUTTERWAVE_SECRET_KEY is missing in environment.');
+      return res.status(500).json({
+        success: false,
+        status: 'error',
+        message: 'Flutterwave secret key is not configured. Please set FLUTTERWAVE_SECRET_KEY in your environment variables.',
+      });
+    }
 
     let appBaseUrl = process.env.APP_URL || 'https://www.invoiceflowai.cloud';
     if (!appBaseUrl.startsWith('http://') && !appBaseUrl.startsWith('https://')) {
@@ -99,67 +109,70 @@ export default async function handler(req: any, res: any) {
       ? `Authorize card for 7-day free trial. Then $${fullPlanPrice}/month automatically. Cancel anytime before trial ends.`
       : `Monthly subscription to InvoiceFlow ${planTitle} Plan ($${fullPlanPrice}/month)`;
 
-    if (flwSecretKey && flwSecretKey.startsWith('FLWSECK') && !flwSecretKey.includes('xxx')) {
-      const flwResponse = await fetch('https://api.flutterwave.com/v3/payments', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${flwSecretKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          tx_ref,
-          amount,
-          currency: 'USD',
-          redirect_url,
-          payment_options: 'card,ussd,mobilemoney,banktransfer',
-          customer: {
-            email: email.trim(),
-            name: name || 'InvoiceFlow Subscriber',
-          },
-          customizations: {
-            title,
-            description,
-            logo: `${appBaseUrl}/favicon.ico`,
-          },
-          meta: {
-            plan: selectedPlan,
-            business_id: businessId,
-            mode,
-            is_trial: isTrial,
-            full_plan_price: fullPlanPrice,
-          },
-        }),
-      });
-
-      const flwData = await flwResponse.json();
-
-      if (flwData.status === 'success' && flwData.data?.link) {
-        return res.json({
-          status: 'success',
-          message: 'Payment link generated successfully',
-          data: {
-            link: flwData.data.link,
-            tx_ref,
-            amount,
-            currency: 'USD',
-            mode,
-          },
-        });
-      }
-    }
-
-    // Standard fallback / dev link
-    return res.json({
-      status: 'success',
-      message: 'Checkout initialized',
-      data: {
+    const flwResponse = await fetch('https://api.flutterwave.com/v3/payments', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${flwSecretKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         tx_ref,
         amount,
         currency: 'USD',
-        link: redirect_url,
-        mode,
-      },
+        redirect_url,
+        payment_options: 'card,ussd,mobilemoney,banktransfer',
+        customer: {
+          email: email.trim(),
+          name: name || 'InvoiceFlow Subscriber',
+        },
+        customizations: {
+          title,
+          description,
+          logo: `${appBaseUrl}/favicon.ico`,
+        },
+        meta: {
+          plan: selectedPlan,
+          business_id: businessId,
+          mode,
+          is_trial: isTrial,
+          full_plan_price: fullPlanPrice,
+        },
+      }),
     });
+
+    const flwData = await flwResponse.json();
+    const hostedLink = flwData.data?.link || flwData.link;
+
+    if (flwResponse.ok && flwData.status === 'success' && hostedLink) {
+      return res.json({
+        success: true,
+        status: 'success',
+        link: hostedLink,
+        message: 'Payment link generated successfully',
+        data: {
+          link: hostedLink,
+          tx_ref,
+          amount,
+          currency: 'USD',
+          mode,
+          plan: selectedPlan,
+        },
+        tx_ref,
+        amount,
+        currency: 'USD',
+        mode,
+        plan: selectedPlan,
+      });
+    } else {
+      const errorMsg = flwData?.message || flwData?.error || 'Flutterwave checkout initialization failed';
+      return res.status(flwResponse.ok ? 400 : flwResponse.status).json({
+        success: false,
+        status: 'error',
+        message: errorMsg,
+        error: errorMsg,
+        data: flwData?.data || null,
+      });
+    }
   } catch (err: any) {
     console.error('❌ Flutterwave Initialize Error:', err);
     return res.status(500).json({ status: 'failed', message: err.message || 'Initialization error' });

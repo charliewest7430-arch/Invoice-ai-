@@ -60,7 +60,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const serverSupabase = createClient(supabaseUrl, supabaseKey);
-    const flwSecretKey = process.env.FLW_SECRET_KEY;
+    const flwSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY;
     const now = new Date();
     const nowIso = now.toISOString();
     const lockUntilIso = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
@@ -193,7 +193,7 @@ export default async function handler(req: any, res: any) {
         // Fallback
       }
 
-      if (flwSecretKey && flwSecretKey.startsWith('FLWSECK') && !flwSecretKey.includes('xxx')) {
+      if (flwSecretKey && flwSecretKey.trim()) {
         try {
           const names = userName.trim().split(' ');
           const chargeRes = await fetch('https://api.flutterwave.com/v3/tokenized-charges', {

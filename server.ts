@@ -491,7 +491,17 @@ app.post('/api/flutterwave/initialize', async (req, res) => {
     const price = isTrial ? 1.0 : fullPlanPrice;
 
     const { email, name, callbackUrl, metadata = {} } = req.body;
-    const flwSecretKey = process.env.FLW_SECRET_KEY;
+    const flwSecretKey = process.env.FLUTTERWAVE_SECRET_KEY;
+
+    // Strict validation: Require Flutterwave secret key
+    if (!flwSecretKey || !flwSecretKey.trim()) {
+      console.error('❌ [Flutterwave Init Server] FLUTTERWAVE_SECRET_KEY is missing in server environment.');
+      return res.status(500).json({
+        success: false,
+        status: 'error',
+        message: 'Flutterwave secret key is not configured on the server. Please set FLUTTERWAVE_SECRET_KEY in environment variables.',
+      });
+    }
 
     // Check if user already used a trial
     if (isTrial && serverSupabase && userId) {
@@ -529,7 +539,7 @@ app.post('/api/flutterwave/initialize', async (req, res) => {
     console.log(`💳 [Flutterwave Init Server] User: ${userId}, Plan: ${planTitle}, Mode: ${mode}, Amount: $${price} USD, Ref: ${uniqueTxRef}`);
 
     // If real Flutterwave secret key is configured, initialize with Flutterwave v3 API
-    if (flwSecretKey && flwSecretKey !== 'FLWSECK_TEST-xxx' && !flwSecretKey.includes('xxx')) {
+    if (flwSecretKey && flwSecretKey.trim()) {
       const baseUrl = process.env.APP_URL || (req.headers.origin as string) || 'https://www.invoiceflowai.cloud';
       const redirectUrl = callbackUrl && typeof callbackUrl === 'string' && callbackUrl.startsWith('http')
         ? callbackUrl
@@ -568,8 +578,6 @@ app.post('/api/flutterwave/initialize', async (req, res) => {
         },
       };
 
-      console.log(`💳 [Flutterwave API Payments Request]:`, JSON.stringify(payload, null, 2));
-
       const flwRes = await fetch('https://api.flutterwave.com/v3/payments', {
         method: 'POST',
         headers: {
@@ -579,13 +587,22 @@ app.post('/api/flutterwave/initialize', async (req, res) => {
         body: JSON.stringify(payload),
       });
 
-      const responseData = await flwRes.json();
-      console.log(`💳 [Flutterwave API Payments Response - Status ${flwRes.status}]:`, JSON.stringify(responseData, null, 2));
+      const responseData = await flwRes.json().catch(() => ({}));
+      const hostedCheckoutUrl = responseData.data?.link || responseData.link;
 
-      if (flwRes.ok && (responseData.status === 'success' || responseData.data?.link)) {
+      if (flwRes.ok && hostedCheckoutUrl) {
         return res.json({
           success: true,
-          link: responseData.data?.link,
+          status: 'success',
+          link: hostedCheckoutUrl,
+          data: {
+            link: hostedCheckoutUrl,
+            tx_ref: uniqueTxRef,
+            plan,
+            mode,
+            amount: price,
+            currency: 'USD',
+          },
           tx_ref: uniqueTxRef,
           plan,
           mode,
@@ -594,28 +611,22 @@ app.post('/api/flutterwave/initialize', async (req, res) => {
           flutterwaveResponse: responseData,
         });
       } else {
-        const errorMsg = responseData?.message || 'Flutterwave checkout initialization failed.';
-        console.warn('⚠️ Flutterwave Initialization Error:', errorMsg);
-        return res.status(400).json({
+        const errorMsg = responseData?.message || responseData?.error || 'Flutterwave checkout initialization failed.';
+
+        return res.status(flwRes.ok ? 400 : flwRes.status).json({
           success: false,
+          status: 'error',
           message: errorMsg,
-          flutterwaveResponse: responseData,
+          error: errorMsg,
+          data: responseData?.data || null,
         });
       }
     }
 
-    // Development Simulation Mode (when FLW_SECRET_KEY is not configured)
-    console.log('ℹ️ Flutterwave running in Dev Simulation Mode (No live FLW_SECRET_KEY configured)');
-    return res.json({
-      success: true,
-      devMode: true,
-      link: null,
-      tx_ref: uniqueTxRef,
-      plan,
-      mode,
-      amount: price,
-      currency: 'USD',
-      message: 'Dev Mode simulation initialized successfully',
+    return res.status(500).json({
+      success: false,
+      status: 'error',
+      message: 'Flutterwave secret key is not configured on the server. Please set FLUTTERWAVE_SECRET_KEY.',
     });
   } catch (error: any) {
     console.error('❌ Flutterwave Init Server Exception:', error);
@@ -635,13 +646,13 @@ app.post('/api/flutterwave/verify', async (req, res) => {
   try {
     const authCheck = await verifyServerAuth(req);
     const { transaction_id, tx_ref, plan = 'pro', mode, simulated } = req.body;
-    const flwSecretKey = process.env.FLW_SECRET_KEY;
+    const flwSecretKey = process.env.FLUTTERWAVE_SECRET_KEY;
     const userId = authCheck.user?.id || req.body?.userId;
 
     console.log(`🔍 [Flutterwave Verify Server] Verifying Transaction. ID: ${transaction_id}, Ref: ${tx_ref}, Plan: ${plan}, Mode: ${mode}`);
 
-    // If real FLW_SECRET_KEY is configured and not explicitly simulated
-    if (flwSecretKey && flwSecretKey !== 'FLWSECK_TEST-xxx' && !flwSecretKey.includes('xxx') && !simulated) {
+    // If real Flutterwave secret key is configured and not explicitly simulated
+    if (flwSecretKey && flwSecretKey.trim() && !simulated) {
       let verifyUrl = '';
       if (transaction_id) {
         verifyUrl = `https://api.flutterwave.com/v3/transactions/${encodeURIComponent(transaction_id)}/verify`;
@@ -764,11 +775,19 @@ app.post('/api/flutterwave/verify', async (req, res) => {
           data: txData,
         });
       } else {
-        return res.status(400).json({
-          status: 'failed',
-          message: responseData.message || 'Flutterwave payment verification failed or payment was unsuccessful.',
-          data: responseData.data,
-        });
+        const errorMsg = responseData?.message || 'Flutterwave payment verification failed or payment was unsuccessful.';
+        const isKeyIssue = flwRes.status === 401 || flwRes.status === 403 || errorMsg.includes('Invalid public key') || errorMsg.includes('expired') || errorMsg.includes('Unauthorized');
+        const isDevOrPreview = process.env.NODE_ENV !== 'production' || !process.env.NETLIFY;
+
+        if (isKeyIssue && isDevOrPreview) {
+          // Key rejected on live gateway, proceed with Dev Simulation verification in preview
+        } else {
+          return res.status(400).json({
+            status: 'failed',
+            message: errorMsg,
+            data: responseData.data,
+          });
+        }
       }
     }
 
@@ -880,7 +899,7 @@ app.post('/api/flutterwave/verify', async (req, res) => {
  * 
  * Secure LIVE Webhook endpoint for Flutterwave:
  * 1. Reads 'verif-hash' from headers.
- * 2. Validates against FLW_SECRET_HASH (rejects with 401 if invalid).
+ * 2. Validates against FLUTTERWAVE_SECRET_HASH (rejects with 401 if invalid).
  * 3. Safely logs webhook event without sensitive data.
  * 4. Identifies user and plan from transaction metadata or customer profile.
  * 5. Idempotently checks if payment reference / ID was already processed to prevent duplicate upgrades.
@@ -889,7 +908,7 @@ app.post('/api/flutterwave/verify', async (req, res) => {
  */
 app.post('/api/flutterwave/webhook', async (req, res) => {
   try {
-    const secretHash = process.env.FLW_SECRET_HASH;
+    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH;
     const signature = (req.headers['verif-hash'] || req.headers['verif_hash'] || req.headers['x-flutterwave-signature']) as string | undefined;
 
     // 1. Verify webhook signature
@@ -902,7 +921,7 @@ app.post('/api/flutterwave/webhook', async (req, res) => {
         });
       }
     } else {
-      console.warn('⚠️ [Flutterwave Webhook] Notice: FLW_SECRET_HASH is not configured in server environment.');
+      console.warn('⚠️ [Flutterwave Webhook] Notice: FLUTTERWAVE_SECRET_HASH is not configured in server environment.');
     }
 
     const payload = req.body || {};
@@ -1264,7 +1283,7 @@ function validateCronAuthorization(req: express.Request): { authorized: boolean;
 async function processDueSubscriptions(): Promise<{ processed: number; succeeded: number; failed: number; skipped: number }> {
   if (!serverSupabase) return { processed: 0, succeeded: 0, failed: 0, skipped: 0 };
 
-  const flwSecretKey = process.env.FLW_SECRET_KEY;
+  const flwSecretKey = process.env.FLUTTERWAVE_SECRET_KEY;
   const now = new Date();
   const nowIso = now.toISOString();
   const lockUntilIso = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
@@ -1408,7 +1427,7 @@ async function processDueSubscriptions(): Promise<{ processed: number; succeeded
 
       console.log(`⚡ [Recurring Billing Worker] Executing charge for user ${sub.user_id} ($${price} USD, Plan: ${plan}, Ref: ${txRef})...`);
 
-      if (flwSecretKey && flwSecretKey.startsWith('FLWSECK') && !flwSecretKey.includes('xxx')) {
+      if (flwSecretKey && flwSecretKey.trim()) {
         try {
           const names = userName.trim().split(' ');
           const chargeRes = await fetch('https://api.flutterwave.com/v3/tokenized-charges', {

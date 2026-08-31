@@ -75,38 +75,42 @@ export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOp
       initData = { success: false, message: text || `Server responded with status ${res.status}` };
     }
 
-    if (!res.ok || !initData.success) {
-      const errorMsg = initData.message || (res.status === 401 ? 'Please sign in or create an account to start your upgrade.' : 'Failed to initialize Flutterwave checkout session.');
-      console.warn('⚠️ Flutterwave initialization declined:', errorMsg);
-      if (options.onError) {
-        options.onError({ message: errorMsg, data: initData });
-      }
-      return;
-    }
+    // Extract the hosted checkout URL safely across all potential payload shapes
+    const checkoutUrl =
+      (typeof initData.link === 'string' && initData.link.startsWith('http') ? initData.link : null) ||
+      (typeof initData.data?.link === 'string' && initData.data.link.startsWith('http') ? initData.data.link : null) ||
+      (typeof initData.data?.checkout_url === 'string' && initData.data.checkout_url.startsWith('http') ? initData.data.checkout_url : null) ||
+      (typeof initData.checkout_url === 'string' && initData.checkout_url.startsWith('http') ? initData.checkout_url : null) ||
+      (typeof initData.flutterwaveResponse?.data?.link === 'string' && initData.flutterwaveResponse.data.link.startsWith('http') ? initData.flutterwaveResponse.data.link : null);
 
-    // If hosted link returned from Flutterwave v3 API, redirect to Flutterwave Standard checkout
-    if (initData.link && initData.link.startsWith('http')) {
-      console.log('🔗 Redirecting to Flutterwave Standard Checkout:', initData.link);
-      // Save pending verification ref
+    const txRef =
+      initData.tx_ref ||
+      initData.data?.tx_ref ||
+      initData.flutterwaveResponse?.data?.tx_ref ||
+      `FLW-${Date.now()}`;
+
+    // 1. If hosted link returned from Flutterwave v3 API, immediately redirect the user to Flutterwave
+    if (checkoutUrl) {
+      console.log('🔗 Redirecting to Flutterwave Standard Checkout:', checkoutUrl);
       try {
         sessionStorage.setItem('invoiceflow_flw_pending_tx', JSON.stringify({
-          tx_ref: initData.tx_ref,
+          tx_ref: txRef,
           plan: planName,
           mode: options.mode || 'subscription',
-          amount: initData.amount,
+          amount: initData.amount || initData.data?.amount || expectedAmount,
         }));
       } catch (e) {
         console.warn('Storage notice:', e);
       }
-      window.location.href = initData.link;
+      window.location.href = checkoutUrl;
       return;
     }
 
-    // Dev Simulation Mode (when FLW_SECRET_KEY is not configured in development)
+    // 2. Dev Simulation Mode (when simulated in development/preview without live keys)
     if (initData.devMode) {
       console.info('ℹ️ Running Flutterwave in Development Simulation Mode');
       const verifyRes = await verifyFlutterwaveTransaction({
-        tx_ref: initData.tx_ref,
+        tx_ref: txRef,
         plan: planName,
         mode: options.mode || 'subscription',
         simulated: true,
@@ -115,7 +119,7 @@ export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOp
       if (verifyRes.success) {
         if (options.onSuccess) {
           options.onSuccess({
-            reference: initData.tx_ref,
+            reference: txRef,
             status: 'success',
             data: verifyRes.data,
           });
@@ -126,8 +130,18 @@ export async function initiateFlutterwaveCheckout(options: FlutterwaveCheckoutOp
       return;
     }
 
+    // 3. Otherwise, display the actual safe error message returned from Flutterwave / backend
+    const errorMsg =
+      initData.message ||
+      initData.error ||
+      initData.flutterwaveResponse?.message ||
+      (res.status === 401
+        ? 'Please sign in or create an account to start your upgrade.'
+        : 'Failed to initialize Flutterwave checkout session.');
+
+    console.warn('⚠️ Flutterwave initialization error:', errorMsg);
     if (options.onError) {
-      options.onError({ message: 'No valid checkout link was returned from payment provider.' });
+      options.onError({ message: errorMsg, data: initData });
     }
   } catch (err: any) {
     console.error('❌ Flutterwave Checkout Error:', err);

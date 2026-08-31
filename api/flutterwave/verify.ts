@@ -32,7 +32,7 @@ export default async function handler(req: any, res: any) {
     }
 
     const { transaction_id, tx_ref, plan, userId, mode } = body || {};
-    const flwSecretKey = process.env.FLW_SECRET_KEY;
+    const flwSecretKey = process.env.FLUTTERWAVE_SECRET_KEY;
 
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
@@ -44,7 +44,7 @@ export default async function handler(req: any, res: any) {
     );
     const serverSupabase = isSupabaseConfigured && supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
-    if (flwSecretKey && flwSecretKey.startsWith('FLWSECK') && !flwSecretKey.includes('xxx')) {
+    if (flwSecretKey && flwSecretKey.trim()) {
       let verifyUrl = '';
       if (transaction_id) {
         verifyUrl = `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`;

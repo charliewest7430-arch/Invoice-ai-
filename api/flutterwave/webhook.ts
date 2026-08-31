@@ -19,7 +19,7 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const secretHash = process.env.FLW_SECRET_HASH;
+    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH || process.env.FLW_SECRET_HASH;
     const signature = (req.headers['verif-hash'] || req.headers['verif_hash'] || req.headers['x-flutterwave-signature']) as string | undefined;
 
     // 1. Signature Verification
@@ -32,7 +32,7 @@ export default async function handler(req: any, res: any) {
         });
       }
     } else {
-      console.warn('⚠️ [Flutterwave Webhook Serverless] FLW_SECRET_HASH is not set in environment.');
+      console.warn('⚠️ [Flutterwave Webhook Serverless] FLUTTERWAVE_SECRET_HASH is not set in environment.');
     }
 
     let payload = req.body;
