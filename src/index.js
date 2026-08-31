@@ -95,7 +95,7 @@ Return ONLY valid JSON (no markdown formatting, no code blocks) with this struct
 Invoice details or prompt: ${typeof body === 'string' ? body : JSON.stringify(body)}`;
 
         const geminiResponse = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey.trim()}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey.trim()}`,
           {
             method: 'POST',
             headers: {
