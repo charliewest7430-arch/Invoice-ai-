@@ -1,0 +1,11 @@
+name = "invoice-ai"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+binding = "ASSETS"
+directory = "./dist"
+
+[vars]
+ENVIRONMENT = "production"
