@@ -79,6 +79,15 @@ async function verifyServerAuth(req: express.Request): Promise<{ authenticated: 
 
 app.use(express.json());
 
+// Normalize Netlify serverless function paths (e.g., /.netlify/functions/api/* -> /api/*)
+app.use((req, res, next) => {
+  if (req.url && req.url.startsWith('/.netlify/functions/api')) {
+    const stripped = req.url.replace(/^\/\.netlify\/functions\/api/, '');
+    req.url = stripped.startsWith('/api') ? stripped : '/api' + (stripped.startsWith('/') ? stripped : '/' + stripped);
+  }
+  next();
+});
+
 // Enable CORS middleware for all endpoints and preflight requests
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -2401,8 +2410,14 @@ app.post('/api/billing/limits', async (req, res) => {
   return res.json({ allowed: true, limit: maxAllowed });
 });
 
-// Vite Middleware for development / Static serving in production
+// Export Express app and core workers for Netlify and serverless adapters
+export { app, processDueSubscriptions };
+
+// Vite Middleware for development / Static serving in production (standalone mode only)
 async function startServer() {
+  if (process.env.NETLIFY || process.env.NETLIFY_LOCAL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return;
+  }
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -2422,4 +2437,7 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.NETLIFY && !process.env.NETLIFY_LOCAL && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
+
