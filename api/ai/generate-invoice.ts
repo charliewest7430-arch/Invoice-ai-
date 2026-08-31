@@ -68,13 +68,13 @@ const parseGeminiError = (error: any) => {
 };
 
 // Multi-model resilient generator with automatic fallback on 503 high demand or quota limits
-const FALLBACK_MODELS = ['gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.7-flash'];
+const FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
 
 const generateContentWithFallback = async (
   ai: GoogleGenAI,
   requestParams: Omit<Parameters<typeof ai.models.generateContent>[0], 'model'> & { model?: string }
 ) => {
-  const primary = requestParams.model || 'gemini-3.5-flash';
+  const primary = requestParams.model || 'gemini-2.5-flash';
   const modelsToTry = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
   let lastError: any;
 
@@ -172,7 +172,7 @@ export default async function handler(req: any, res: any) {
       .join('\n');
 
     const response = await generateContentWithFallback(ai, {
-      model: 'gemini-3.5-flash',
+      model: 'gemini-2.5-flash',
       contents: `Parse the following user prompt and extract or generate a complete, structured professional invoice object.
 User Prompt: "${prompt}"
 Default Currency: ${defaultCurrency}

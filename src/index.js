@@ -94,42 +94,57 @@ Return ONLY valid JSON (no markdown formatting, no code blocks) with this struct
 
 Invoice details or prompt: ${typeof body === 'string' ? body : JSON.stringify(body)}`;
 
-        const geminiResponse = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey.trim()}`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
+        const modelsToTry = ['gemini-2.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
+        let geminiData = null;
+        let lastErrorMsg = '';
+
+        for (const model of modelsToTry) {
+          try {
+            const geminiResponse = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey.trim()}`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  contents: [
                     {
-                      text: promptText,
+                      parts: [
+                        {
+                          text: promptText,
+                        },
+                      ],
                     },
                   ],
-                },
-              ],
-              generationConfig: {
-                temperature: 0.7,
-                responseMimeType: 'application/json',
-              },
-            }),
+                  generationConfig: {
+                    temperature: 0.7,
+                    responseMimeType: 'application/json',
+                  },
+                }),
+              }
+            );
+
+            const data = await geminiResponse.json();
+            if (geminiResponse.ok && data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+              geminiData = data;
+              break;
+            } else {
+              lastErrorMsg =
+                data?.error?.message ||
+                data?.message ||
+                `Gemini API returned status ${geminiResponse.status}`;
+            }
+          } catch (fetchErr) {
+            lastErrorMsg = fetchErr?.message || 'Network error while calling Gemini API';
           }
-        );
+        }
 
-        const geminiData = await geminiResponse.json();
-
-        if (!geminiResponse.ok) {
-          const errorMsg =
-            geminiData?.error?.message ||
-            geminiData?.message ||
-            `Gemini API returned status ${geminiResponse.status}`;
+        if (!geminiData) {
           return new Response(
             JSON.stringify({
               status: 'error',
-              message: errorMsg,
+              message: lastErrorMsg || 'Failed to generate invoice with Gemini AI',
             }),
             {
               status: 500,
