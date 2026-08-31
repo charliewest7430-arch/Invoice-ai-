@@ -54,6 +54,34 @@ export default {
 
         const body = await request.json();
 
+        // Ensure Flutterwave v3 required fields are present and properly structured
+        const tx_ref = body.tx_ref || `INV-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+        const amount = body.amount || (body.plan === 'enterprise' ? 15.99 : 9.99);
+        const currency = body.currency || 'USD';
+        const customer = body.customer || {
+          email: body.email || 'customer@example.com',
+          name: body.name || 'Subscriber',
+          phonenumber: body.phoneNumber || body.phone_number || '',
+        };
+        const redirect_url = body.redirect_url || body.callbackUrl || `${url.origin}/billing?flw_callback=1`;
+        const payment_options = body.payment_options || body.paymentOptions || 'card,mobilemoney,ussd,banktransfer';
+        const customizations = body.customizations || {
+          title: body.plan ? `InvoiceFlow ${body.plan.toUpperCase()} Plan` : 'Invoice Payment',
+          description: `Payment for ${body.plan || 'InvoiceFlow'}`,
+          logo: `${url.origin}/favicon.ico`,
+        };
+
+        const flwPayload = {
+          tx_ref,
+          amount,
+          currency,
+          redirect_url,
+          payment_options,
+          customer,
+          customizations,
+          meta: body.meta || body.metadata || { plan: body.plan, mode: body.mode },
+        };
+
         // Forward request to Flutterwave Standard Checkout API
         const flwResponse = await fetch('https://api.flutterwave.com/v3/payments', {
           method: 'POST',
@@ -61,7 +89,7 @@ export default {
             Authorization: `Bearer ${secretKey.trim()}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(flwPayload),
         });
 
         const flwData = await flwResponse.json();
