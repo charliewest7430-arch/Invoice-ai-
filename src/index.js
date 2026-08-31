@@ -1,7 +1,7 @@
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, Origin, X-Requested-With, Accept',
 };
 
 export default {
@@ -315,7 +315,694 @@ Invoice details or prompt: ${typeof body === 'string' ? body : JSON.stringify(bo
       }
     }
 
-    // 4. Example API route demonstrating access to env variables & secrets
+    // 4. Send Invoice Email Route (Resend API)
+    if (url.pathname === '/api/email/send-invoice') {
+      if (request.method !== 'POST') {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Method Not Allowed',
+            message: 'The /api/email/send-invoice endpoint only supports POST requests.',
+          }),
+          {
+            status: 405,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+
+      try {
+        let body = {};
+        try {
+          body = await request.json();
+        } catch {
+          body = {};
+        }
+
+        const { to, invoiceNumber, amount, currency, businessName, clientName, dueDate, issueDate, status, paymentLink, customNote } = body || {};
+
+        if (!to || typeof to !== 'string' || !to.trim() || !to.includes('@')) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: 'This client does not have an email address. Add an email address before sending the invoice.',
+            }),
+            {
+              status: 400,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+        }
+
+        const cleanEmail = to.trim();
+        const resendApiKey = env.RESEND_API_KEY;
+
+        if (resendApiKey && resendApiKey.trim()) {
+          const resendRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendApiKey.trim()}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: env.EMAIL_FROM || 'InvoiceFlow <no-reply@invoiceflowai.cloud>',
+              to: [cleanEmail],
+              subject: `Invoice ${invoiceNumber || 'Document'} from ${businessName || 'InvoiceFlow AI'}`,
+              html: `
+                <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+                  <h2 style="color: #0f172a; margin-top: 0; font-size: 22px;">Invoice ${invoiceNumber || ''}</h2>
+                  <p style="color: #475569; font-size: 14px;">Dear ${clientName || 'Valued Client'},</p>
+                  <p style="color: #475569; font-size: 14px;">Please find the details below for invoice <strong>${invoiceNumber || ''}</strong> issued by <strong>${businessName || 'Business'}</strong>.</p>
+                  
+                  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 16px; border-radius: 12px; margin: 20px 0; font-size: 14px;">
+                    <p style="margin: 6px 0; color: #334155;"><strong>Invoice Number:</strong> ${invoiceNumber || 'N/A'}</p>
+                    <p style="margin: 6px 0; color: #334155;"><strong>Total Amount Due:</strong> ${currency || '$'} ${Number(amount || 0).toFixed(2)}</p>
+                    <p style="margin: 6px 0; color: #334155;"><strong>Issue Date:</strong> ${issueDate || 'N/A'}</p>
+                    <p style="margin: 6px 0; color: #334155;"><strong>Due Date:</strong> ${dueDate || 'N/A'}</p>
+                    <p style="margin: 6px 0; color: #334155;"><strong>Status:</strong> ${(status || 'SENT').toUpperCase()}</p>
+                  </div>
+
+                  ${customNote ? `<div style="padding: 12px 16px; background-color: #f1f5f9; border-left: 4px solid #6366f1; border-radius: 4px; margin-bottom: 20px;"><p style="margin: 0; color: #334155; font-style: italic; font-size: 13px;">${customNote}</p></div>` : ''}
+
+                  ${paymentLink ? `<div style="text-align: center; margin: 28px 0;"><a href="${paymentLink}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 14px; display: inline-block;">View & Pay Invoice</a></div>` : ''}
+                  
+                  <hr style="border: none; border-top: 1px solid #e2e8f0; margin-top: 30px; margin-bottom: 20px;" />
+                  <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">Sent securely via InvoiceFlow AI</p>
+                </div>
+              `,
+            }),
+          });
+
+          const resendData = await resendRes.json();
+          if (resendRes.ok && resendData.id) {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                messageId: resendData.id,
+                provider: 'Resend',
+                message: 'Invoice sent successfully',
+              }),
+              {
+                status: 200,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+          } else {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: resendData.message || 'Failed to send invoice email via Resend',
+              }),
+              {
+                status: 400,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+          }
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: false,
+            configured: false,
+            message: 'Email provider is not configured. Please set RESEND_API_KEY in environment variables to send emails.',
+          }),
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      } catch (err) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: err.message || 'Server email delivery exception',
+          }),
+          {
+            status: 500,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+    }
+
+    // 5. Send Payment Receipt Email Route (Resend API)
+    if (url.pathname === '/api/email/send-receipt') {
+      if (request.method !== 'POST') {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Method Not Allowed',
+            message: 'The /api/email/send-receipt endpoint only supports POST requests.',
+          }),
+          {
+            status: 405,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+
+      try {
+        let body = {};
+        try {
+          body = await request.json();
+        } catch {
+          body = {};
+        }
+
+        const {
+          to,
+          receiptNumber,
+          invoiceNumber,
+          amount,
+          currency,
+          businessName,
+          clientName,
+          paymentDate,
+          paymentMethod,
+          notes,
+        } = body || {};
+
+        if (!to || typeof to !== 'string' || !to.trim() || !to.includes('@')) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: 'Valid client email address is required to send receipt.',
+            }),
+            {
+              status: 400,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+        }
+
+        const cleanEmail = to.trim();
+        const resendApiKey = env.RESEND_API_KEY;
+
+        if (resendApiKey && resendApiKey.trim()) {
+          const formattedDate = paymentDate
+            ? new Date(paymentDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+            : new Date().toLocaleDateString('en-US');
+
+          const resendRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendApiKey.trim()}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: env.EMAIL_FROM || 'InvoiceFlow <no-reply@invoiceflowai.cloud>',
+              to: [cleanEmail],
+              subject: `Payment Receipt ${receiptNumber} for Invoice ${invoiceNumber}`,
+              html: `
+                <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+                  <div style="text-align: center; margin-bottom: 20px;">
+                    <span style="display: inline-block; padding: 6px 14px; background-color: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; border-radius: 9999px; font-weight: bold; font-size: 12px; text-transform: uppercase;">
+                      ✓ Payment Received & Settled
+                    </span>
+                    <h2 style="color: #0f172a; margin: 12px 0 4px; font-size: 24px; font-weight: 800;">Official Payment Receipt</h2>
+                    <p style="color: #64748b; font-size: 13px; margin: 0;">Receipt #: <strong>${receiptNumber || 'N/A'}</strong></p>
+                  </div>
+
+                  <p style="color: #475569; font-size: 14px;">Dear ${clientName || 'Valued Customer'},</p>
+                  <p style="color: #475569; font-size: 14px;">Thank you for your prompt payment! This email serves as your official payment receipt for invoice <strong>${invoiceNumber || ''}</strong> issued by <strong>${businessName || 'Our Business'}</strong>.</p>
+                  
+                  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 18px; border-radius: 12px; margin: 20px 0; font-size: 14px;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                      <tr>
+                        <td style="padding: 6px 0; color: #64748b;">Receipt Number:</td>
+                        <td style="padding: 6px 0; font-weight: bold; color: #0f172a; text-align: right;">${receiptNumber || 'N/A'}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; color: #64748b;">Invoice Reference:</td>
+                        <td style="padding: 6px 0; font-weight: bold; color: #0f172a; text-align: right;">${invoiceNumber || 'N/A'}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; color: #64748b;">Payment Date:</td>
+                        <td style="padding: 6px 0; color: #0f172a; text-align: right;">${formattedDate}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding: 6px 0; color: #64748b;">Payment Method:</td>
+                        <td style="padding: 6px 0; color: #0f172a; text-align: right;">${paymentMethod || 'Credit Card / Electronic Transfer'}</td>
+                      </tr>
+                      <tr style="border-top: 1px solid #e2e8f0;">
+                        <td style="padding: 10px 0 4px; font-weight: bold; color: #0f172a; font-size: 15px;">Amount Paid:</td>
+                        <td style="padding: 10px 0 4px; font-weight: 800; color: #059669; font-size: 16px; text-align: right;">${currency || '$'} ${Number(amount || 0).toFixed(2)}</td>
+                      </tr>
+                    </table>
+                  </div>
+
+                  ${notes ? `<div style="padding: 12px 16px; background-color: #f1f5f9; border-left: 4px solid #10b981; border-radius: 4px; margin-bottom: 20px;"><p style="margin: 0; color: #334155; font-size: 13px;"><strong>Note:</strong> ${notes}</p></div>` : ''}
+
+                  <hr style="border: none; border-top: 1px solid #e2e8f0; margin-top: 30px; margin-bottom: 20px;" />
+                  <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">Issued securely via InvoiceFlow AI</p>
+                </div>
+              `,
+            }),
+          });
+
+          const resendData = await resendRes.json();
+          if (resendRes.ok && resendData.id) {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                messageId: resendData.id,
+                provider: 'Resend',
+                message: 'Receipt sent successfully',
+              }),
+              {
+                status: 200,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+          } else {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: resendData.message || 'Failed to send receipt email via Resend',
+              }),
+              {
+                status: 400,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+          }
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: false,
+            configured: false,
+            message: 'Email provider is not configured. Please set RESEND_API_KEY in environment variables to send emails.',
+          }),
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      } catch (err) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: err.message || 'Server receipt email delivery exception',
+          }),
+          {
+            status: 500,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+    }
+
+    // 6. Send Payment Reminder Email Route (Resend API)
+    if (url.pathname === '/api/reminders/send-manual') {
+      if (request.method !== 'POST') {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Method Not Allowed',
+            message: 'The /api/reminders/send-manual endpoint only supports POST requests.',
+          }),
+          {
+            status: 405,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+
+      try {
+        let body = {};
+        try {
+          body = await request.json();
+        } catch {
+          body = {};
+        }
+
+        const { to, invoiceNumber, amount, currency, businessName, clientName, dueDate, daysOverdue, customMessage, paymentLink } = body || {};
+
+        if (!to || typeof to !== 'string' || !to.trim() || !to.includes('@')) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: 'Valid recipient email address is required.',
+            }),
+            {
+              status: 400,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+        }
+
+        const cleanEmail = to.trim();
+        const resendApiKey = env.RESEND_API_KEY;
+
+        if (resendApiKey && resendApiKey.trim()) {
+          const isOverdue = typeof daysOverdue === 'number' && daysOverdue > 0;
+          const subject = isOverdue
+            ? `Payment Reminder: Invoice ${invoiceNumber} is ${daysOverdue} days overdue`
+            : `Friendly Payment Reminder: Invoice ${invoiceNumber} from ${businessName || 'InvoiceFlow AI'}`;
+
+          const resendRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendApiKey.trim()}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: env.EMAIL_FROM || 'InvoiceFlow <no-reply@invoiceflowai.cloud>',
+              to: [cleanEmail],
+              subject,
+              html: `
+                <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+                  <h2 style="color: #0f172a; margin-top: 0; font-size: 22px;">Payment Reminder: Invoice ${invoiceNumber}</h2>
+                  <p style="color: #475569; font-size: 14px;">Dear ${clientName || 'Valued Client'},</p>
+                  <p style="color: #475569; font-size: 14px;">This is a friendly reminder that invoice <strong>${invoiceNumber}</strong> issued by <strong>${businessName || 'Business'}</strong> is ${isOverdue ? `<span style="color: #dc2626; font-weight: bold;">${daysOverdue} days overdue</span>` : 'due soon'}.</p>
+                  
+                  <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 16px; border-radius: 12px; margin: 20px 0; font-size: 14px;">
+                    <p style="margin: 6px 0; color: #334155;"><strong>Invoice Number:</strong> ${invoiceNumber}</p>
+                    <p style="margin: 6px 0; color: #334155;"><strong>Total Amount Due:</strong> ${currency || '$'} ${Number(amount || 0).toFixed(2)}</p>
+                    <p style="margin: 6px 0; color: #334155;"><strong>Due Date:</strong> ${dueDate || 'N/A'}</p>
+                  </div>
+
+                  ${customMessage ? `<div style="padding: 12px 16px; background-color: #f1f5f9; border-left: 4px solid #6366f1; border-radius: 4px; margin-bottom: 20px;"><p style="margin: 0; color: #334155; font-style: italic; font-size: 13px;">${customMessage}</p></div>` : ''}
+
+                  ${paymentLink ? `<div style="text-align: center; margin: 28px 0;"><a href="${paymentLink}" style="background-color: #4f46e5; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 10px; font-weight: bold; font-size: 14px; display: inline-block;">Pay Invoice Now</a></div>` : ''}
+                  
+                  <hr style="border: none; border-top: 1px solid #e2e8f0; margin-top: 30px; margin-bottom: 20px;" />
+                  <p style="color: #94a3b8; font-size: 12px; text-align: center; margin: 0;">Sent via InvoiceFlow AI</p>
+                </div>
+              `,
+            }),
+          });
+
+          const resendData = await resendRes.json();
+          if (resendRes.ok && resendData.id) {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                messageId: resendData.id,
+                provider: 'Resend',
+                message: 'Reminder sent successfully',
+              }),
+              {
+                status: 200,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+          } else {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: resendData.message || 'Failed to send reminder email via Resend',
+              }),
+              {
+                status: 400,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json',
+                },
+              }
+            );
+          }
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: false,
+            configured: false,
+            message: 'Email provider is not configured. Please set RESEND_API_KEY in environment variables to send emails.',
+          }),
+          {
+            status: 400,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      } catch (err) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: err.message || 'Server reminder email delivery exception',
+          }),
+          {
+            status: 500,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+    }
+
+    // 7. Send Welcome Email Route (Resend API)
+    if (url.pathname === '/api/email/welcome') {
+      if (request.method !== 'POST') {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Method Not Allowed',
+            message: 'The /api/email/welcome endpoint only supports POST requests.',
+          }),
+          {
+            status: 405,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+
+      try {
+        let body = {};
+        try {
+          body = await request.json();
+        } catch {
+          body = {};
+        }
+
+        const { email, name, userId, businessName } = body || {};
+
+        const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+        if (!email || typeof email !== 'string' || !emailRegex.test(email.trim())) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: 'Invalid or malformed recipient email address.',
+            }),
+            {
+              status: 400,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+        }
+
+        const resendApiKey = env.RESEND_API_KEY;
+        if (!resendApiKey || !resendApiKey.trim()) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              configured: false,
+              message: 'Email provider is not configured. Please set RESEND_API_KEY in environment variables.',
+            }),
+            {
+              status: 200,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+        }
+
+        const appOrigin = env.APP_URL || 'https://invoiceflowai.cloud';
+        const senderFrom = env.EMAIL_FROM || env.RESEND_FROM_EMAIL || 'InvoiceFlow <no-reply@invoiceflowai.cloud>';
+        const cleanEmail = email.trim().toLowerCase();
+        const cleanName = name?.trim() || cleanEmail.split('@')[0] || 'there';
+
+        const textContent = `Hi ${cleanName},
+
+Welcome to InvoiceFlow! 🎉
+
+Your account has been successfully created.
+
+InvoiceFlow helps you create professional invoices, manage your business billing, track expenses, send payment reminders, and stay organized.
+
+You can now log in and start using InvoiceFlow:
+${appOrigin}
+
+Thanks for choosing InvoiceFlow.
+The InvoiceFlow Team
+`;
+
+        const htmlContent = `
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>Welcome to InvoiceFlow</title>
+          </head>
+          <body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color: #f8fafc; padding: 40px 16px;">
+              <tr>
+                <td align="center">
+                  <table role="presentation" width="100%" max-width="560" cellspacing="0" cellpadding="0" border="0" style="max-width: 560px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                    <tr>
+                      <td style="padding: 32px 32px 24px; text-align: left; border-bottom: 1px solid #f1f5f9;">
+                        <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                          <tr>
+                            <td style="width: 38px; height: 38px; background-color: #2563eb; border-radius: 10px; text-align: center; vertical-align: middle; color: #ffffff; font-weight: 800; font-size: 18px;">
+                              IF
+                            </td>
+                            <td style="padding-left: 12px;">
+                              <span style="font-size: 19px; font-weight: 800; color: #0f172a; letter-spacing: -0.5px;">InvoiceFlow</span>
+                              <span style="display: block; font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Smart Billing Platform</span>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 32px; color: #334155; font-size: 15px; line-height: 1.65;">
+                        <p style="margin: 0 0 16px; font-size: 15px; color: #334155;">Hi ${cleanName},</p>
+                        <h1 style="margin: 0 0 16px; font-size: 22px; font-weight: 800; color: #0f172a; line-height: 1.3;">
+                          Welcome to InvoiceFlow! 🎉
+                        </h1>
+                        <p style="margin: 0 0 16px; color: #334155;">
+                          Your account has been successfully created.
+                        </p>
+                        <p style="margin: 0 0 20px; color: #334155;">
+                          InvoiceFlow helps you create professional invoices, manage your business billing, track expenses, send payment reminders, and stay organized.
+                        </p>
+                        <p style="margin: 0 0 28px; color: #334155;">
+                          You can now log in and start using InvoiceFlow.
+                        </p>
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin: 28px 0;">
+                          <tr>
+                            <td align="center">
+                              <a href="${appOrigin}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #2563eb; color: #ffffff; font-size: 15px; font-weight: 700; text-decoration: none; padding: 14px 32px; border-radius: 10px; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.25);">
+                                Open InvoiceFlow
+                              </a>
+                            </td>
+                          </tr>
+                        </table>
+                        <p style="margin: 28px 0 0; color: #475569; font-size: 14px; line-height: 1.6;">
+                          Thanks for choosing InvoiceFlow.<br />
+                          <strong style="color: #0f172a;">The InvoiceFlow Team</strong>
+                        </p>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 20px 32px 28px; background-color: #f8fafc; border-top: 1px solid #e2e8f0; text-align: center;">
+                        <p style="margin: 0 0 6px; font-size: 12px; color: #64748b;">
+                          This email was sent to <span style="font-weight: 600; color: #334155;">${cleanEmail}</span>.
+                        </p>
+                        <p style="margin: 0; font-size: 11px; color: #94a3b8;">
+                          © ${new Date().getFullYear()} InvoiceFlow AI. All rights reserved.
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+          </html>
+        `;
+
+        const resendRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${resendApiKey.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: senderFrom,
+            to: [cleanEmail],
+            subject: 'Welcome to InvoiceFlow 🎉',
+            text: textContent,
+            html: htmlContent,
+          }),
+        });
+
+        const resendData = await resendRes.json();
+        return new Response(
+          JSON.stringify({ success: resendRes.ok, data: resendData }),
+          {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      } catch (err) {
+        return new Response(
+          JSON.stringify({ success: false, error: err.message }),
+          {
+            status: 500,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+      }
+    }
+
+    // 8. Example API route demonstrating access to env variables & secrets
     if (url.pathname === '/api/hello') {
       const environment = env.ENVIRONMENT || 'development';
       const customMessage = env.CUSTOM_MESSAGE || 'Hello from Cloudflare Worker!';
